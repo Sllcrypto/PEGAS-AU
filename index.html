@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Analisis de pegas</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body class="bg-white">
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useMemo, useCallback, useEffect } = React;
+
+/* ====================== CONFIGURACION SUPABASE ======================
+   1. Crea un proyecto en supabase.com
+   2. Corre el SQL de mas abajo (ver comentario SQL_SETUP) en el SQL editor
+   3. Ve a Project Settings > API y copia la Project URL y la anon key (JWT, no la "publishable")
+   4. Pegalas aqui abajo antes de subir este archivo a GitHub Pages
+   ====================================================================== */
+const SUPABASE_URL = "TU_SUPABASE_URL_AQUI";
+const SUPABASE_ANON_KEY = "TU_SUPABASE_ANON_KEY_AQUI";
+
+let supabaseClient = null;
+try {
+  if (SUPABASE_URL.startsWith("http") && SUPABASE_ANON_KEY.length > 10) {
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
+} catch (e) {
+  console.warn("Supabase no configurado todavia:", e);
+}
+
+/* SQL_SETUP (correr una sola vez en Supabase SQL editor):
+
+create table pegas_uploads (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  nombre_archivo text,
+  filas int,
+  data jsonb
+);
+alter table pegas_uploads enable row level security;
+create policy "acceso publico" on pegas_uploads for all using (true) with check (true);
+alter publication supabase_realtime add table pegas_uploads;
+
+*/
+
+/* ====================== LOGICA DE DATOS ====================== */
+
+const COLUMN_MAP = {
+  sucursal: ["sucursal"],
+  bodega: ["bodega"],
+  codigo: ["codigo", "código", "cod"],
+  descripcion: ["descripcion", "descripción", "desc"],
+  costo: ["costo de ultima compra", "costo de última compra", "costo ultima compra", "costo"],
+  fechaCompra: ["fecha de ultima compra", "fecha de última compra", "fecha ultima compra", "fecha"],
+  cantidadComprada: ["cantidades compradas en total", "cantidad comprada", "cantidades compradas"],
+  stock: ["stock actual", "stock", "cantidad en stock", "existencias"],
+  margen: ["margen de ganancia", "margen"],
+  precioSinImp: ["precio de venta sin impuesto", "precio sin impuesto"],
+  precioConImp: ["precio de venta con impuesto", "precio con impuesto"],
+};
+
+function normalizeHeader(h) {
+  return String(h || "").trim().toLowerCase();
+}
+
+function buildColumnIndex(headers) {
+  const idx = {};
+  const normalized = headers.map(normalizeHeader);
+  for (const [key, aliases] of Object.entries(COLUMN_MAP)) {
+    let found = -1;
+    for (const alias of aliases) {
+      const i = normalized.findIndex((h) => h === alias || h.includes(alias));
+      if (i !== -1) { found = i; break; }
+    }
+    idx[key] = found;
+  }
+  return idx;
+}
+
+function excelDateToJs(value) {
+  if (value instanceof Date) return value;
+  if (typeof value === "number") return new Date(Math.round((value - 25569) * 86400 * 1000));
+  if (typeof value === "string" && value.trim()) {
+    const parsed = new Date(value);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+  return null;
+}
+
+function toNumber(value) {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const cleaned = value.replace(/[^0-9.,-]/g, "").replace(",", ".");
+    const n = parseFloat(cleaned);
+    return isNaN(n) ? 0 : n;
+  }
+  return 0;
+}
+
+function parseRows(rows) {
+  if (!rows.length) return [];
+  const headers = rows[0];
+  const idx = buildColumnIndex(headers);
+  const out = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || row.every((c) => c === undefined || c === "")) continue;
+    const get = (key) => (idx[key] !== -1 ? row[idx[key]] : undefined);
+    const codigo = get("codigo");
+    if (codigo === undefined || codigo === "") continue;
+    const fecha = excelDateToJs(get("fechaCompra"));
+    out.push({
+      sucursal: String(get("sucursal") ?? "Sin dato"),
+      bodega: String(get("bodega") ?? "Sin dato"),
+      codigo: String(codigo),
+      descripcion: String(get("descripcion") ?? ""),
+      costo: toNumber(get("costo")),
+      fechaCompra: fecha ? fecha.toISOString() : null,
+      cantidadComprada: toNumber(get("cantidadComprada")),
+      stock: toNumber(get("stock")),
+      margen: toNumber(get("margen")),
+      precioSinImp: toNumber(get("precioSinImp")),
+      precioConImp: toNumber(get("precioConImp")),
+    });
+  }
+  return out;
+}
+
+function daysSince(iso) {
+  if (!iso) return null;
+  const diff = Date.now() - new Date(iso).getTime();
+  return Math.max(0, Math.round(diff / 86400000));
+}
+
+function enrich(rows) {
+  return rows.map((r) => ({
+    ...r,
+    capitalAtrapado: r.costo * r.stock,
+    diasSinCompra: daysSince(r.fechaCompra),
+  }));
+}
+
+function rankPercentile(values, value) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  let count = 0;
+  for (const v of sorted) if (v <= value) count++;
+  return count / sorted.length;
+}
+
+function withScore(rows) {
+  const capitales = rows.map((r) => r.capitalAtrapado);
+  const dias = rows.map((r) => r.diasSinCompra ?? 0);
+  const margenes = rows.map((r) => r.margen);
+  return rows.map((r) => {
+    const pCapital = rankPercentile(capitales, r.capitalAtrapado);
+    const pDias = rankPercentile(dias, r.diasSinCompra ?? 0);
+    const pMargenBajo = 1 - rankPercentile(margenes, r.margen);
+    const score = pCapital * 0.4 + pDias * 0.35 + pMargenBajo * 0.25;
+    return { ...r, score };
+  });
+}
+
+function money(n) {
+  return new Intl.NumberFormat("es-CR", { style: "currency", currency: "CRC", maximumFractionDigits: 0 }).format(n || 0);
+}
+
+function sampleData() {
+  const sucursales = [
+    { s: "Central", bodegas: ["11", "13"] },
+    { s: "Esquina", bodegas: ["21", "22"] },
+    { s: "Hatillo", bodegas: ["31", "32"] },
+  ];
+  const nombres = [
+    "Perfume Aurea 100ml", "Perfume Nocturne 50ml", "Tenis runner blanco", "Tenis urban negro",
+    "Perfume Velvet Rose", "Sandalia clasica", "Perfume Oud Intense", "Tenis skate gris",
+    "Perfume Citrus Fresh", "Bota casual cafe", "Perfume Amber Wood", "Tenis training azul",
+  ];
+  const rows = [];
+  let n = 0;
+  for (const suc of sucursales) {
+    for (const bod of suc.bodegas) {
+      for (let i = 0; i < 6; i++) {
+        n++;
+        const nombre = nombres[(n * 3) % nombres.length];
+        const costo = 8000 + ((n * 137) % 40000);
+        const stock = 1 + ((n * 5) % 30);
+        const diasAtras = 10 + ((n * 47) % 400);
+        const fecha = new Date(Date.now() - diasAtras * 86400000);
+        const margen = 8 + ((n * 13) % 45);
+        rows.push([suc.s, bod, `SKU-${1000 + n}`, nombre, costo, fecha, stock + 5, stock, margen,
+          costo * (1 + margen / 100), costo * (1 + margen / 100) * 1.13]);
+      }
+    }
+  }
+  return [
+    ["sucursal", "bodega", "codigo", "descripcion", "costo de ultima compra", "fecha de ultima compra",
+      "cantidades compradas en total", "stock actual", "margen de ganancia",
+      "precio de venta sin impuesto", "precio de venta con impuesto"],
+    ...rows,
+  ];
+}
+
+/* ====================== EXPORTACION ====================== */
+
+function exportExcel(rows, view) {
+  const cols = rows.map((r) => ({
+    Codigo: r.codigo, Descripcion: r.descripcion, Sucursal: r.sucursal, Bodega: r.bodega,
+    Stock: r.stock, "Capital atrapado": Math.round(r.capitalAtrapado),
+    "Dias sin comprar": r.diasSinCompra ?? "", "Margen %": r.margen,
+    ...(view !== "capital" ? { Score: Math.round(r.score * 100) } : {}),
+  }));
+  const ws = XLSX.utils.json_to_sheet(cols);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Reporte pegas");
+  XLSX.writeFile(wb, `reporte-pegas-${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+function exportPdf(rows, view, titulo) {
+  const doc = new window.jspdf.jsPDF({ orientation: "landscape" });
+  doc.setFontSize(14);
+  doc.text(titulo, 14, 15);
+  doc.setFontSize(9);
+  doc.text(`Generado ${new Date().toLocaleDateString("es-CR")}`, 14, 21);
+  const head = [["#", "Codigo", "Descripcion", "Sucursal", "Bodega", "Stock", "Capital atrapado", "Dias sin comprar", "Margen"]];
+  if (view !== "capital") head[0].push("Score");
+  const body = rows.map((r, i) => {
+    const row = [i + 1, r.codigo, r.descripcion, r.sucursal, r.bodega, r.stock,
+      money(r.capitalAtrapado), r.diasSinCompra ?? "-", `${r.margen}%`];
+    if (view !== "capital") row.push(Math.round(r.score * 100));
+    return row;
+  });
+  doc.autoTable({ head, body, startY: 26, styles: { fontSize: 8 } });
+  doc.save(`reporte-pegas-${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+/* ====================== COMPONENTE PRINCIPAL ====================== */
+
+function App() {
+  const [parsedRaw, setParsedRaw] = useState(() => parseRows(sampleData()));
+  const [usingSample, setUsingSample] = useState(true);
+  const [fileName, setFileName] = useState("");
+  const [view, setView] = useState("capital");
+  const [sucursalFiltro, setSucursalFiltro] = useState("Todas");
+  const [bodegaFiltro, setBodegaFiltro] = useState("Todas");
+  const [topN, setTopN] = useState(20);
+  const [error, setError] = useState("");
+  const [tab, setTab] = useState("analisis");
+  const [historial, setHistorial] = useState([]);
+  const [guardando, setGuardando] = useState(false);
+  const [reportModal, setReportModal] = useState(false);
+  const [reportVista, setReportVista] = useState("actual");
+  const [reportFormato, setReportFormato] = useState("pdf");
+  const [correoDestino, setCorreoDestino] = useState("");
+
+  const supabaseListo = !!supabaseClient;
+
+  const cargarHistorial = useCallback(async () => {
+    if (!supabaseClient) return;
+    const { data, error } = await supabaseClient
+      .from("pegas_uploads")
+      .select("id, created_at, nombre_archivo, filas")
+      .order("created_at", { ascending: false })
+      .limit(30);
+    if (!error) setHistorial(data || []);
+  }, []);
+
+  useEffect(() => {
+    if (tab === "historial") cargarHistorial();
+  }, [tab, cargarHistorial]);
+
+  const handleFile = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError("");
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = new Uint8Array(evt.target.result);
+        const wb = XLSX.read(data, { type: "array", cellDates: true });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
+        const parsed = parseRows(rows);
+        if (!parsed.length) {
+          setError("No se encontraron filas con codigo valido. Revisa los encabezados del Excel.");
+          return;
+        }
+        setParsedRaw(parsed);
+        setUsingSample(false);
+        setFileName(file.name);
+        setSucursalFiltro("Todas");
+        setBodegaFiltro("Todas");
+      } catch (err) {
+        setError("No se pudo leer el archivo. Verifica que sea un .xlsx o .csv valido.");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }, []);
+
+  const guardarEnHistorial = useCallback(async () => {
+    if (!supabaseClient) {
+      setError("Supabase no esta configurado todavia en este archivo.");
+      return;
+    }
+    setGuardando(true);
+    const { error } = await supabaseClient.from("pegas_uploads").insert({
+      nombre_archivo: fileName || "datos de ejemplo",
+      filas: parsedRaw.length,
+      data: parsedRaw,
+    });
+    setGuardando(false);
+    if (error) setError("No se pudo guardar en el historial: " + error.message);
+  }, [parsedRaw, fileName]);
+
+  const cargarDesdeHistorial = useCallback(async (id) => {
+    if (!supabaseClient) return;
+    const { data, error } = await supabaseClient.from("pegas_uploads").select("data, nombre_archivo").eq("id", id).single();
+    if (!error && data) {
+      setParsedRaw(data.data);
+      setFileName(data.nombre_archivo);
+      setUsingSample(false);
+      setTab("analisis");
+    }
+  }, []);
+
+  const enriched = useMemo(() => withScore(enrich(parsedRaw)), [parsedRaw]);
+
+  const sucursales = useMemo(() => {
+    const set = new Set(enriched.map((r) => r.sucursal));
+    return ["Todas", ...Array.from(set).sort()];
+  }, [enriched]);
+
+  const bodegas = useMemo(() => {
+    const scoped = sucursalFiltro === "Todas" ? enriched : enriched.filter((r) => r.sucursal === sucursalFiltro);
+    const set = new Set(scoped.map((r) => r.bodega));
+    return ["Todas", ...Array.from(set).sort()];
+  }, [enriched, sucursalFiltro]);
+
+  const filtered = useMemo(() => enriched.filter((r) =>
+    (sucursalFiltro === "Todas" || r.sucursal === sucursalFiltro) &&
+    (bodegaFiltro === "Todas" || r.bodega === bodegaFiltro)
+  ), [enriched, sucursalFiltro, bodegaFiltro]);
+
+  const sorted = useMemo(() => {
+    const copy = [...filtered];
+    if (view === "capital") copy.sort((a, b) => b.capitalAtrapado - a.capitalAtrapado);
+    else copy.sort((a, b) => b.score - a.score);
+    return copy.slice(0, topN);
+  }, [filtered, view, topN]);
+
+  const totals = useMemo(() => ({
+    capitalTotal: filtered.reduce((s, r) => s + r.capitalAtrapado, 0),
+    capitalTop: sorted.reduce((s, r) => s + r.capitalAtrapado, 0),
+    count: filtered.length,
+  }), [filtered, sorted]);
+
+  function ejecutarReporte() {
+    const usarVista = reportVista === "actual" ? view : reportVista;
+    const filas = usarVista === view ? sorted : (() => {
+      const copy = [...filtered];
+      if (usarVista === "capital") copy.sort((a, b) => b.capitalAtrapado - a.capitalAtrapado);
+      else copy.sort((a, b) => b.score - a.score);
+      return copy.slice(0, topN);
+    })();
+    const titulo = usarVista === "capital" ? "Reporte - Mayor capital atrapado" : "Reporte - Candidatos reales a pega";
+    if (reportFormato === "pdf") exportPdf(filas, usarVista, titulo);
+    else exportExcel(filas, usarVista);
+    setReportModal(false);
+  }
+
+  function abrirCorreo() {
+    const asunto = encodeURIComponent("Reporte de pegas - " + new Date().toLocaleDateString("es-CR"));
+    const cuerpo = encodeURIComponent(
+      "Buenas,\n\nAdjunto el reporte de productos de baja rotacion (pegas).\n\nSaludos."
+    );
+    window.location.href = `mailto:${correoDestino}?subject=${asunto}&body=${cuerpo}`;
+  }
+
+  return (
+    <div className="max-w-6xl mx-auto p-4 space-y-5 text-stone-800">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-stone-900">Analisis de pegas</h1>
+          <p className="text-sm text-stone-500">Productos de baja rotacion por sucursal y bodega</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => setTab("analisis")}
+            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === "analisis" ? "bg-stone-900 text-white border-stone-900" : "border-stone-300"}`}>
+            Analisis
+          </button>
+          <button onClick={() => setTab("historial")}
+            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === "historial" ? "bg-stone-900 text-white border-stone-900" : "border-stone-300"}`}>
+            Historial
+          </button>
+        </div>
+      </div>
+
+      {!supabaseListo && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
+          Supabase no esta configurado en este archivo todavia (edita SUPABASE_URL y SUPABASE_ANON_KEY al inicio del HTML). El historial no funcionara hasta que lo conectes.
+        </div>
+      )}
+
+      {tab === "historial" ? (
+        <div className="border border-stone-200 rounded-lg divide-y divide-stone-100">
+          {historial.length === 0 && (
+            <p className="p-4 text-sm text-stone-400">No hay cargas guardadas todavia.</p>
+          )}
+          {historial.map((h) => (
+            <div key={h.id} className="p-3 flex items-center justify-between text-sm">
+              <div>
+                <p className="font-medium">{h.nombre_archivo}</p>
+                <p className="text-stone-400">{new Date(h.created_at).toLocaleString("es-CR")} - {h.filas} filas</p>
+              </div>
+              <button onClick={() => cargarDesdeHistorial(h.id)} className="px-3 py-1.5 border border-stone-300 rounded-lg hover:bg-stone-50">
+                Cargar
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <React.Fragment>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="inline-flex items-center gap-2 px-3 py-2 border border-stone-300 rounded-lg text-sm cursor-pointer hover:bg-stone-50">
+                Subir Excel
+                <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
+              </label>
+              {!usingSample && (
+                <button onClick={() => { setParsedRaw(parseRows(sampleData())); setUsingSample(true); setFileName(""); }}
+                  className="px-3 py-2 border border-stone-300 rounded-lg text-sm hover:bg-stone-50">
+                  Datos de ejemplo
+                </button>
+              )}
+              <button onClick={guardarEnHistorial} disabled={guardando}
+                className="px-3 py-2 border border-stone-300 rounded-lg text-sm hover:bg-stone-50 disabled:opacity-50">
+                {guardando ? "Guardando..." : "Guardar en historial"}
+              </button>
+            </div>
+            <button onClick={() => setReportModal(true)}
+              className="px-3 py-2 bg-stone-900 text-white rounded-lg text-sm hover:bg-stone-800">
+              Generar reporte
+            </button>
+          </div>
+
+          {usingSample && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
+              Estas viendo datos de ejemplo. Sube tu Excel real para analizar tus productos.
+            </div>
+          )}
+          {!usingSample && fileName && (
+            <div className="text-sm text-stone-500">Archivo cargado: {fileName} - {parsedRaw.length} filas leidas</div>
+          )}
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{error}</div>
+          )}
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-stone-50 rounded-lg p-3">
+              <p className="text-xs text-stone-500 mb-1">SKUs en vista actual</p>
+              <p className="text-xl font-medium">{totals.count}</p>
+            </div>
+            <div className="bg-stone-50 rounded-lg p-3">
+              <p className="text-xs text-stone-500 mb-1">Capital atrapado (filtro)</p>
+              <p className="text-xl font-medium">{money(totals.capitalTotal)}</p>
+            </div>
+            <div className="bg-stone-50 rounded-lg p-3">
+              <p className="text-xs text-stone-500 mb-1">Capital en el top mostrado</p>
+              <p className="text-xl font-medium">{money(totals.capitalTop)}</p>
+            </div>
+            <div className="bg-stone-50 rounded-lg p-3">
+              <p className="text-xs text-stone-500 mb-1">Mostrando</p>
+              <p className="text-xl font-medium">Top {Math.min(topN, sorted.length)}</p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => setView("capital")}
+              className={`px-3 py-1.5 rounded-lg text-sm border ${view === "capital" ? "bg-stone-900 text-white border-stone-900" : "border-stone-300 hover:bg-stone-50"}`}>
+              Mayor capital atrapado
+            </button>
+            <button onClick={() => setView("pega")}
+              className={`px-3 py-1.5 rounded-lg text-sm border ${view === "pega" ? "bg-stone-900 text-white border-stone-900" : "border-stone-300 hover:bg-stone-50"}`}>
+              Candidatos reales a pega
+            </button>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <select value={sucursalFiltro} onChange={(e) => { setSucursalFiltro(e.target.value); setBodegaFiltro("Todas"); }}
+                className="text-sm border border-stone-300 rounded-lg px-2 py-1.5">
+                {sucursales.map((s) => <option key={s} value={s}>{s === "Todas" ? "Todas las sucursales" : s}</option>)}
+              </select>
+              <select value={bodegaFiltro} onChange={(e) => setBodegaFiltro(e.target.value)}
+                className="text-sm border border-stone-300 rounded-lg px-2 py-1.5">
+                {bodegas.map((b) => <option key={b} value={b}>{b === "Todas" ? "Todas las bodegas" : `Bodega ${b}`}</option>)}
+              </select>
+              <select value={topN} onChange={(e) => setTopN(Number(e.target.value))}
+                className="text-sm border border-stone-300 rounded-lg px-2 py-1.5">
+                {[10, 20, 30, 50].map((n) => <option key={n} value={n}>Top {n}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-stone-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-stone-50 text-stone-500 text-xs uppercase tracking-wide">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium">#</th>
+                  <th className="text-left px-3 py-2 font-medium">Codigo</th>
+                  <th className="text-left px-3 py-2 font-medium">Descripcion</th>
+                  <th className="text-left px-3 py-2 font-medium">Sucursal</th>
+                  <th className="text-left px-3 py-2 font-medium">Bodega</th>
+                  <th className="text-right px-3 py-2 font-medium">Stock</th>
+                  <th className="text-right px-3 py-2 font-medium">Capital atrapado</th>
+                  <th className="text-right px-3 py-2 font-medium">Dias sin comprar</th>
+                  <th className="text-right px-3 py-2 font-medium">Margen</th>
+                  {view === "pega" && <th className="text-right px-3 py-2 font-medium">Score</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((r, i) => (
+                  <tr key={`${r.codigo}-${r.sucursal}-${r.bodega}-${i}`} className="border-t border-stone-100 hover:bg-stone-50">
+                    <td className="px-3 py-2 text-stone-400">{i + 1}</td>
+                    <td className="px-3 py-2 font-medium">{r.codigo}</td>
+                    <td className="px-3 py-2 text-stone-600">{r.descripcion}</td>
+                    <td className="px-3 py-2 text-stone-600">{r.sucursal}</td>
+                    <td className="px-3 py-2 text-stone-600">{r.bodega}</td>
+                    <td className="px-3 py-2 text-right">{r.stock}</td>
+                    <td className="px-3 py-2 text-right font-medium">{money(r.capitalAtrapado)}</td>
+                    <td className="px-3 py-2 text-right">{r.diasSinCompra ?? "-"}</td>
+                    <td className="px-3 py-2 text-right">{r.margen}%</td>
+                    {view === "pega" && <td className="px-3 py-2 text-right font-medium">{Math.round(r.score * 100)}</td>}
+                  </tr>
+                ))}
+                {sorted.length === 0 && (
+                  <tr><td colSpan={10} className="px-3 py-6 text-center text-stone-400">Sin datos para este filtro.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="text-xs text-stone-400">
+            Capital atrapado = costo de ultima compra x stock actual. Score de pega combina capital atrapado, dias sin comprar
+            y margen bajo, segun la posicion relativa dentro del filtro actual. Sin datos de venta real, estos son indicadores
+            basados en compra e inventario, no rotacion confirmada.
+          </p>
+        </React.Fragment>
+      )}
+
+      {reportModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-5 w-full max-w-sm space-y-4">
+            <h2 className="font-medium text-stone-900">Generar reporte</h2>
+
+            <div>
+              <p className="text-xs text-stone-500 mb-1">Vista a incluir</p>
+              <select value={reportVista} onChange={(e) => setReportVista(e.target.value)}
+                className="w-full text-sm border border-stone-300 rounded-lg px-2 py-1.5">
+                <option value="actual">La vista que estoy viendo ahora ({view === "capital" ? "capital atrapado" : "candidatos a pega"})</option>
+                <option value="capital">Mayor capital atrapado</option>
+                <option value="pega">Candidatos reales a pega</option>
+              </select>
+            </div>
+
+            <div>
+              <p className="text-xs text-stone-500 mb-1">Formato</p>
+              <div className="flex gap-2">
+                <button onClick={() => setReportFormato("pdf")}
+                  className={`flex-1 px-3 py-1.5 rounded-lg text-sm border ${reportFormato === "pdf" ? "bg-stone-900 text-white border-stone-900" : "border-stone-300"}`}>
+                  PDF
+                </button>
+                <button onClick={() => setReportFormato("excel")}
+                  className={`flex-1 px-3 py-1.5 rounded-lg text-sm border ${reportFormato === "excel" ? "bg-stone-900 text-white border-stone-900" : "border-stone-300"}`}>
+                  Excel
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs text-stone-500 mb-1">Correo de gerencia (opcional, para el boton de enviar)</p>
+              <input type="email" value={correoDestino} onChange={(e) => setCorreoDestino(e.target.value)}
+                placeholder="gerencia@empresa.com"
+                className="w-full text-sm border border-stone-300 rounded-lg px-2 py-1.5" />
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button onClick={ejecutarReporte} className="flex-1 px-3 py-2 bg-stone-900 text-white rounded-lg text-sm hover:bg-stone-800">
+                Descargar {reportFormato === "pdf" ? "PDF" : "Excel"}
+              </button>
+              <button onClick={abrirCorreo} className="flex-1 px-3 py-2 border border-stone-300 rounded-lg text-sm hover:bg-stone-50">
+                Abrir correo
+              </button>
+            </div>
+            <p className="text-xs text-stone-400">
+              El boton "Abrir correo" prepara el mensaje en tu app de correo; el archivo descargado lo adjuntas manualmente
+              (los navegadores no permiten adjuntar automaticamente por seguridad).
+            </p>
+            <button onClick={() => setReportModal(false)} className="w-full text-xs text-stone-400 hover:text-stone-600 pt-1">
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
