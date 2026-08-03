@@ -170,8 +170,25 @@ function withScore(rows) {
   });
 }
 
-function money(n) {
-  return new Intl.NumberFormat("es-CR", { style: "currency", currency: "CRC", maximumFractionDigits: 0 }).format(n || 0);
+function money(n, symbol) {
+  const formatted = new Intl.NumberFormat("es-CR", { maximumFractionDigits: 0 }).format(Math.round(n || 0));
+  return symbol ? `${symbol} ${formatted}` : formatted;
+}
+
+/* Detecta el simbolo de moneda tal como aparece en las columnas de costo/precio
+   del Excel original (raw:false trae el texto formateado, ej. "₡8,500.00") */
+function detectCurrencySymbol(rowsFormatted, idx) {
+  const candidateCols = ["costo", "precioSinImp", "precioConImp"].map((k) => idx[k]).filter((i) => i !== -1);
+  for (const col of candidateCols) {
+    for (let r = 1; r < Math.min(rowsFormatted.length, 20); r++) {
+      const cell = rowsFormatted[r] ? rowsFormatted[r][col] : undefined;
+      if (typeof cell === "string") {
+        const match = cell.match(/[^\d\s.,-]+/);
+        if (match && match[0].trim()) return match[0].trim();
+      }
+    }
+  }
+  return null;
 }
 
 function sampleData() {
@@ -212,10 +229,11 @@ function sampleData() {
 
 /* ====================== EXPORTACION ====================== */
 
-function exportExcel(rows, view) {
+function exportExcel(rows, view, moneda) {
+  const etiquetaCapital = moneda ? `Capital atrapado (${moneda})` : "Capital atrapado";
   const cols = rows.map((r) => ({
     Codigo: r.codigo, Descripcion: r.descripcion, Sucursal: r.sucursal, Bodega: r.bodega,
-    Stock: r.stock, "Capital atrapado": Math.round(r.capitalAtrapado),
+    Stock: r.stock, [etiquetaCapital]: Math.round(r.capitalAtrapado),
     "Dias sin comprar": r.diasSinCompra ?? "", "Margen %": r.margen,
     ...(view !== "capital" ? { Score: Math.round(r.score * 100) } : {}),
   }));
@@ -225,7 +243,7 @@ function exportExcel(rows, view) {
   XLSX.writeFile(wb, `reporte-pegas-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
-function exportPdf(rows, view, titulo) {
+function buildPdfDoc(rows, view, titulo, moneda) {
   const doc = new window.jspdf.jsPDF({ orientation: "landscape" });
   doc.setFontSize(14);
   doc.text(titulo, 14, 15);
@@ -235,11 +253,16 @@ function exportPdf(rows, view, titulo) {
   if (view !== "capital") head[0].push("Score");
   const body = rows.map((r, i) => {
     const row = [i + 1, r.codigo, r.descripcion, r.sucursal, r.bodega, r.stock,
-      money(r.capitalAtrapado), r.diasSinCompra ?? "-", `${r.margen}%`];
+      money(r.capitalAtrapado, moneda), r.diasSinCompra ?? "-", `${r.margen}%`];
     if (view !== "capital") row.push(Math.round(r.score * 100));
     return row;
   });
   doc.autoTable({ head, body, startY: 26, styles: { fontSize: 8 } });
+  return doc;
+}
+
+function exportPdf(rows, view, titulo, moneda) {
+  const doc = buildPdfDoc(rows, view, titulo, moneda);
   doc.save(`reporte-pegas-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
@@ -261,6 +284,11 @@ function App() {
   const [reportVista, setReportVista] = useState("actual");
   const [reportFormato, setReportFormato] = useState("pdf");
   const [correoDestino, setCorreoDestino] = useState("");
+  const [moneda, setMoneda] = useState("₡");
+  const [previewMode, setPreviewMode] = useState(false);
+  const [previewFilas, setPreviewFilas] = useState([]);
+  const [previewVista, setPreviewVista] = useState("capital");
+  const [previewPdfUrl, setPreviewPdfUrl] = useState(null);
 
   const supabaseListo = !!supabaseClient;
 
@@ -294,6 +322,9 @@ function App() {
           setError("No se encontraron filas con codigo valido. Revisa los encabezados del Excel.");
           return;
         }
+        const rowsFormateadas = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
+        const simboloDetectado = detectCurrencySymbol(rowsFormateadas, buildColumnIndex(rows[0] || []));
+        setMoneda(simboloDetectado || "₡");
         setParsedRaw(parsed);
         setUsingSample(false);
         setFileName(file.name);
@@ -363,7 +394,7 @@ function App() {
     count: filtered.length,
   }), [filtered, sorted]);
 
-  function ejecutarReporte() {
+  function calcularFilasReporte() {
     const usarVista = reportVista === "actual" ? view : reportVista;
     const filas = usarVista === view ? sorted : (() => {
       const copy = [...filtered];
@@ -371,10 +402,34 @@ function App() {
       else copy.sort((a, b) => b.score - a.score);
       return copy.slice(0, topN);
     })();
-    const titulo = usarVista === "capital" ? "Reporte - Mayor capital atrapado" : "Reporte - Candidatos reales a pega";
-    if (reportFormato === "pdf") exportPdf(filas, usarVista, titulo);
-    else exportExcel(filas, usarVista);
+    return { filas, usarVista };
+  }
+
+  function verVistaPrevia() {
+    const { filas, usarVista } = calcularFilasReporte();
+    setPreviewFilas(filas);
+    setPreviewVista(usarVista);
+    if (reportFormato === "pdf") {
+      const titulo = usarVista === "capital" ? "Reporte - Mayor capital atrapado" : "Reporte - Candidatos reales a pega";
+      const doc = buildPdfDoc(filas, usarVista, titulo, moneda);
+      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
+      const url = doc.output("bloburl");
+      setPreviewPdfUrl(url);
+    }
+    setPreviewMode(true);
+  }
+
+  function confirmarDescarga() {
+    const titulo = previewVista === "capital" ? "Reporte - Mayor capital atrapado" : "Reporte - Candidatos reales a pega";
+    if (reportFormato === "pdf") exportPdf(previewFilas, previewVista, titulo, moneda);
+    else exportExcel(previewFilas, previewVista, moneda);
+  }
+
+  function cerrarReporte() {
     setReportModal(false);
+    setPreviewMode(false);
+    if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
+    setPreviewPdfUrl(null);
   }
 
   function abrirCorreo() {
@@ -436,7 +491,7 @@ function App() {
                 <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
               </label>
               {!usingSample && (
-                <button onClick={() => { setParsedRaw(parseRows(sampleData())); setUsingSample(true); setFileName(""); }}
+                <button onClick={() => { setParsedRaw(parseRows(sampleData())); setUsingSample(true); setFileName(""); setMoneda("₡"); }}
                   className="px-3 py-2 border border-stone-300 rounded-lg text-sm hover:bg-stone-50">
                   Datos de ejemplo
                 </button>
@@ -471,11 +526,11 @@ function App() {
             </div>
             <div className="bg-stone-50 rounded-lg p-3">
               <p className="text-xs text-stone-500 mb-1">Capital atrapado (filtro)</p>
-              <p className="text-xl font-medium">{money(totals.capitalTotal)}</p>
+              <p className="text-xl font-medium">{money(totals.capitalTotal, moneda)}</p>
             </div>
             <div className="bg-stone-50 rounded-lg p-3">
               <p className="text-xs text-stone-500 mb-1">Capital en el top mostrado</p>
-              <p className="text-xl font-medium">{money(totals.capitalTop)}</p>
+              <p className="text-xl font-medium">{money(totals.capitalTop, moneda)}</p>
             </div>
             <div className="bg-stone-50 rounded-lg p-3">
               <p className="text-xs text-stone-500 mb-1">Mostrando</p>
@@ -533,7 +588,7 @@ function App() {
                     <td className="px-3 py-2 text-stone-600">{r.sucursal}</td>
                     <td className="px-3 py-2 text-stone-600">{r.bodega}</td>
                     <td className="px-3 py-2 text-right">{r.stock}</td>
-                    <td className="px-3 py-2 text-right font-medium">{money(r.capitalAtrapado)}</td>
+                    <td className="px-3 py-2 text-right font-medium">{money(r.capitalAtrapado, moneda)}</td>
                     <td className="px-3 py-2 text-right">{r.diasSinCompra ?? "-"}</td>
                     <td className="px-3 py-2 text-right">{r.margen}%</td>
                     {view === "pega" && <td className="px-3 py-2 text-right font-medium">{Math.round(r.score * 100)}</td>}
@@ -554,7 +609,7 @@ function App() {
         </React.Fragment>
       )}
 
-      {reportModal && (
+      {reportModal && !previewMode && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl p-5 w-full max-w-sm space-y-4">
             <h2 className="font-medium text-stone-900">Generar reporte</h2>
@@ -591,20 +646,85 @@ function App() {
             </div>
 
             <div className="flex gap-2 pt-2">
-              <button onClick={ejecutarReporte} className="flex-1 px-3 py-2 bg-stone-900 text-white rounded-lg text-sm hover:bg-stone-800">
+              <button onClick={verVistaPrevia} className="flex-1 px-3 py-2 bg-stone-900 text-white rounded-lg text-sm hover:bg-stone-800">
+                Ver vista previa
+              </button>
+            </div>
+            <button onClick={cerrarReporte} className="w-full text-xs text-stone-400 hover:text-stone-600 pt-1">
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {reportModal && previewMode && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-5 w-full max-w-3xl max-h-[85vh] flex flex-col space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-medium text-stone-900">
+                Vista previa - {previewVista === "capital" ? "Mayor capital atrapado" : "Candidatos reales a pega"}
+              </h2>
+              <button onClick={() => setPreviewMode(false)} className="text-xs text-stone-400 hover:text-stone-600">
+                Volver a opciones
+              </button>
+            </div>
+
+            {reportFormato === "pdf" ? (
+              previewPdfUrl ? (
+                <iframe src={previewPdfUrl} title="Vista previa PDF" className="w-full flex-1 border border-stone-200 rounded-lg" style={{ minHeight: "50vh" }} />
+              ) : (
+                <p className="text-sm text-stone-400">Generando vista previa...</p>
+              )
+            ) : (
+              <div className="overflow-auto border border-stone-200 rounded-lg flex-1">
+                <table className="w-full text-sm">
+                  <thead className="bg-stone-50 text-stone-500 text-xs uppercase tracking-wide sticky top-0">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium">Codigo</th>
+                      <th className="text-left px-3 py-2 font-medium">Descripcion</th>
+                      <th className="text-left px-3 py-2 font-medium">Sucursal</th>
+                      <th className="text-left px-3 py-2 font-medium">Bodega</th>
+                      <th className="text-right px-3 py-2 font-medium">Stock</th>
+                      <th className="text-right px-3 py-2 font-medium">Capital atrapado</th>
+                      <th className="text-right px-3 py-2 font-medium">Dias sin comprar</th>
+                      <th className="text-right px-3 py-2 font-medium">Margen</th>
+                      {previewVista === "pega" && <th className="text-right px-3 py-2 font-medium">Score</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewFilas.map((r, i) => (
+                      <tr key={`${r.codigo}-${i}`} className="border-t border-stone-100">
+                        <td className="px-3 py-2 font-medium">{r.codigo}</td>
+                        <td className="px-3 py-2 text-stone-600">{r.descripcion}</td>
+                        <td className="px-3 py-2 text-stone-600">{r.sucursal}</td>
+                        <td className="px-3 py-2 text-stone-600">{r.bodega}</td>
+                        <td className="px-3 py-2 text-right">{r.stock}</td>
+                        <td className="px-3 py-2 text-right font-medium">{money(r.capitalAtrapado, moneda)}</td>
+                        <td className="px-3 py-2 text-right">{r.diasSinCompra ?? "-"}</td>
+                        <td className="px-3 py-2 text-right">{r.margen}%</td>
+                        {previewVista === "pega" && <td className="px-3 py-2 text-right font-medium">{Math.round(r.score * 100)}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={confirmarDescarga} className="flex-1 px-3 py-2 bg-stone-900 text-white rounded-lg text-sm hover:bg-stone-800">
                 Descargar {reportFormato === "pdf" ? "PDF" : "Excel"}
               </button>
               <button onClick={abrirCorreo} className="flex-1 px-3 py-2 border border-stone-300 rounded-lg text-sm hover:bg-stone-50">
                 Abrir correo
               </button>
+              <button onClick={cerrarReporte} className="px-3 py-2 border border-stone-300 rounded-lg text-sm hover:bg-stone-50">
+                Cerrar
+              </button>
             </div>
             <p className="text-xs text-stone-400">
-              El boton "Abrir correo" prepara el mensaje en tu app de correo; el archivo descargado lo adjuntas manualmente
-              (los navegadores no permiten adjuntar automaticamente por seguridad).
+              Revisa la vista previa antes de descargar. El boton "Abrir correo" prepara el mensaje en tu app de correo;
+              el archivo lo adjuntas manualmente despues de descargarlo (los navegadores no permiten adjuntar automaticamente).
             </p>
-            <button onClick={() => setReportModal(false)} className="w-full text-xs text-stone-400 hover:text-stone-600 pt-1">
-              Cerrar
-            </button>
           </div>
         </div>
       )}
