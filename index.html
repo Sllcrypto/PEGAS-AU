@@ -8,12 +8,19 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script>
+  if (typeof tailwind !== "undefined") {
+    tailwind.config = { darkMode: "class" };
+  } else {
+    console.warn("Tailwind no cargo desde el CDN (revisa tu conexion a internet o abre el archivo desde un servidor, no como archivo local).");
+  }
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
-<body class="bg-white">
+<body class="bg-white dark:bg-stone-950 transition-colors">
 <div id="root"></div>
 
 <script type="text/babel">
@@ -54,18 +61,17 @@ alter publication supabase_realtime add table pegas_uploads;
 
 /* ====================== LOGICA DE DATOS ====================== */
 
+const SUCURSALES_ESPERADAS = ["CENTRAL", "ESQUINA", "HATILLO"];
+
 const COLUMN_MAP = {
-  sucursal: ["sucursal"],
-  bodega: ["bodega"],
   codigo: ["codigo", "código", "cod"],
-  descripcion: ["descripcion", "descripción", "desc"],
-  costo: ["costo de ultima compra", "costo de última compra", "costo ultima compra", "costo"],
-  fechaCompra: ["fecha de ultima compra", "fecha de última compra", "fecha ultima compra", "fecha"],
-  cantidadComprada: ["cantidades compradas en total", "cantidad comprada", "cantidades compradas"],
-  stock: ["stock actual", "stock", "cantidad en stock", "existencias"],
-  margen: ["margen de ganancia", "margen"],
-  precioSinImp: ["precio de venta sin impuesto", "precio sin impuesto"],
-  precioConImp: ["precio de venta con impuesto", "precio con impuesto"],
+  descripcion: ["nombre del producto", "descripcion", "descripción"],
+  costo: ["costo mercado colones", "costo de ultima compra", "costo de última compra", "costo"],
+  fechaCompra: ["fecha de la ultima compra", "fecha de ultima compra", "fecha de última compra"],
+  cantidadComprada: ["cantidad de ultima compra", "cantidades compradas en total"],
+  stock: ["stock", "saldo", "existencias"],
+  precioSinImp: ["precio sin"],
+  precioConImp: ["precio con"],
 };
 
 function normalizeHeader(h) {
@@ -86,14 +92,9 @@ function buildColumnIndex(headers) {
   return idx;
 }
 
-function excelDateToJs(value) {
-  if (value instanceof Date) return value;
-  if (typeof value === "number") return new Date(Math.round((value - 25569) * 86400 * 1000));
-  if (typeof value === "string" && value.trim()) {
-    const parsed = new Date(value);
-    if (!isNaN(parsed.getTime())) return parsed;
-  }
-  return null;
+/* Detecta columnas de mes tipo "Jul-25", "Ago-25", etc. */
+function isMonthHeader(h) {
+  return /^[a-zA-Z]{3}-\d{2}$/.test(String(h || "").trim());
 }
 
 function toNumber(value) {
@@ -106,46 +107,92 @@ function toNumber(value) {
   return 0;
 }
 
-function parseRows(rows) {
+/* Lee una hoja de sucursal completa: encabezados en la fila 1, fila 2 es subtitulo
+   ("Unidades Netas Vendidas"), fila 3 es el TOTAL general de la hoja (se salta), y los
+   datos de producto empiezan en la fila 4. El margen no viene en el Excel: se calcula
+   desde costo y precio sin impuesto. */
+function parseSucursalSheet(rows, sucursal, marginLookup) {
   if (!rows.length) return [];
   const headers = rows[0];
   const idx = buildColumnIndex(headers);
+  const monthCols = [];
+  headers.forEach((h, i) => { if (isMonthHeader(h)) monthCols.push(i); });
+  const totalIdx = headers.findIndex((h) => normalizeHeader(h) === "total");
+  const promedioIdx = headers.findIndex((h) => normalizeHeader(h) === "promedio");
+
   const out = [];
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
-    if (!row || row.every((c) => c === undefined || c === "")) continue;
-    const get = (key) => (idx[key] !== -1 ? row[idx[key]] : undefined);
-    const codigo = get("codigo");
-    if (codigo === undefined || codigo === "") continue;
-    const fecha = excelDateToJs(get("fechaCompra"));
+    if (!row) continue;
+    const codigoRaw = idx.codigo !== -1 ? row[idx.codigo] : undefined;
+    const codigo = codigoRaw === undefined || codigoRaw === null ? "" : String(codigoRaw).trim();
+    if (!codigo || codigo.toUpperCase() === "TOTAL") continue;
+
+    const costo = toNumber(idx.costo !== -1 ? row[idx.costo] : 0);
+    const precioSinImp = toNumber(idx.precioSinImp !== -1 ? row[idx.precioSinImp] : 0);
+    const precioConImp = toNumber(idx.precioConImp !== -1 ? row[idx.precioConImp] : 0);
+    let margen;
+    let margenEstimado = false;
+    if (costo > 0 && precioSinImp > 0) {
+      margen = (precioSinImp / costo - 1) * 100;
+    } else if (marginLookup && marginLookup[codigo] !== undefined) {
+      margen = marginLookup[codigo];
+      margenEstimado = true;
+    } else {
+      margen = 0;
+    }
+
+    const ventasMensuales = monthCols.map((ci) => toNumber(row[ci]));
+    const ventaTotal = totalIdx !== -1 ? toNumber(row[totalIdx]) : ventasMensuales.reduce((a, b) => a + b, 0);
+    const ventaPromedio = promedioIdx !== -1 ? toNumber(row[promedioIdx]) : (ventasMensuales.length ? ventaTotal / ventasMensuales.length : 0);
+
+    let mesesSinVenta = 0;
+    for (let m = ventasMensuales.length - 1; m >= 0; m--) {
+      if (ventasMensuales[m] > 0) break;
+      mesesSinVenta++;
+    }
+
     out.push({
-      sucursal: String(get("sucursal") ?? "Sin dato"),
-      bodega: String(get("bodega") ?? "Sin dato"),
-      codigo: String(codigo),
-      descripcion: String(get("descripcion") ?? ""),
-      costo: toNumber(get("costo")),
-      fechaCompra: fecha ? fecha.toISOString() : null,
-      cantidadComprada: toNumber(get("cantidadComprada")),
-      stock: toNumber(get("stock")),
-      margen: toNumber(get("margen")),
-      precioSinImp: toNumber(get("precioSinImp")),
-      precioConImp: toNumber(get("precioConImp")),
+      sucursal,
+      codigo,
+      descripcion: String(idx.descripcion !== -1 ? row[idx.descripcion] ?? "" : ""),
+      costo,
+      stock: toNumber(idx.stock !== -1 ? row[idx.stock] : 0),
+      precioSinImp,
+      precioConImp,
+      margen: Math.round(margen * 10) / 10,
+      margenEstimado,
+      ventaTotal,
+      ventaPromedio: Math.round(ventaPromedio * 100) / 100,
+      mesesSinVenta,
+      mesesMonitoreados: monthCols.length || 13,
     });
   }
   return out;
 }
 
-function daysSince(iso) {
-  if (!iso) return null;
-  const diff = Date.now() - new Date(iso).getTime();
-  return Math.max(0, Math.round(diff / 86400000));
+/* Hoja de respaldo "CODIGOS %": Codigo, Descripcion, Util, MARGEN EN %.
+   Se usa "Util" (precio/costo) para calcular el margen real, no la columna "MARGEN EN %"
+   de esa hoja (parece tener un error de escala). Solo se usa si el producto no trae
+   costo/precio directo en su hoja de sucursal. */
+function parseMarginLookup(rows) {
+  const map = {};
+  if (!rows.length) return map;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row) continue;
+    const codigo = row[0] === undefined || row[0] === null ? "" : String(row[0]).trim();
+    const util = toNumber(row[2]);
+    if (codigo && util > 0) map[codigo] = (util - 1) * 100;
+  }
+  return map;
 }
 
 function enrich(rows) {
   return rows.map((r) => ({
     ...r,
     capitalAtrapado: r.costo * r.stock,
-    diasSinCompra: daysSince(r.fechaCompra),
+    mesesInventario: r.ventaPromedio > 0 ? r.stock / r.ventaPromedio : null,
   }));
 }
 
@@ -157,16 +204,33 @@ function rankPercentile(values, value) {
   return count / sorted.length;
 }
 
+/* Version eficiente: ordena una sola vez y usa busqueda binaria por consulta,
+   en vez de re-ordenar todo el arreglo por cada fila (critico con miles de productos). */
+function makePercentileLookup(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  return (value) => {
+    if (!n) return 0;
+    let lo = 0, hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (sorted[mid] <= value) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo / n;
+  };
+}
+
 function withScore(rows) {
-  const capitales = rows.map((r) => r.capitalAtrapado);
-  const dias = rows.map((r) => r.diasSinCompra ?? 0);
-  const margenes = rows.map((r) => r.margen);
+  const capitalPercentil = makePercentileLookup(rows.map((r) => r.capitalAtrapado));
+  const mesesPercentil = makePercentileLookup(rows.map((r) => r.mesesSinVenta ?? 0));
+  const margenPercentil = makePercentileLookup(rows.map((r) => r.margen));
   return rows.map((r) => {
-    const pCapital = rankPercentile(capitales, r.capitalAtrapado);
-    const pDias = rankPercentile(dias, r.diasSinCompra ?? 0);
-    const pMargenBajo = 1 - rankPercentile(margenes, r.margen);
-    const score = pCapital * 0.4 + pDias * 0.35 + pMargenBajo * 0.25;
-    return { ...r, score };
+    const pCapital = capitalPercentil(r.capitalAtrapado);
+    const pMeses = mesesPercentil(r.mesesSinVenta ?? 0);
+    const pMargenBajo = 1 - margenPercentil(r.margen);
+    const score = pCapital * 0.4 + pMeses * 0.35 + pMargenBajo * 0.25;
+    return { ...r, score, pCapital, pMeses, pMargenBajo };
   });
 }
 
@@ -176,9 +240,82 @@ function money(n, symbol) {
 }
 
 function scoreBadgeClasses(score) {
-  if (score >= 0.66) return "bg-red-100 text-red-700";
-  if (score >= 0.33) return "bg-amber-100 text-amber-700";
-  return "bg-green-100 text-green-700";
+  if (score >= 0.66) return "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300";
+  if (score >= 0.33) return "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
+  return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
+}
+
+/* Clasificacion calculada por la app (no viene del Excel): Grupo A = mayor riesgo/prioridad,
+   Grupo B = riesgo medio, Grupo C = bajo riesgo, buen movimiento. */
+function grupoCalculado(score) {
+  if (score >= 0.66) return "A";
+  if (score >= 0.33) return "B";
+  return "C";
+}
+
+function grupoBadgeClasses(grupo) {
+  if (grupo === "A") return "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300";
+  if (grupo === "B") return "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
+  return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
+}
+
+/* Motor de estrategia financiera por reglas (sin IA externa). Usa los percentiles ya calculados
+   en withScore: pCapital, pDias, pMargenBajo, ademas del score general. */
+function estrategiaFinanciera(r) {
+  const altoCapital = r.pCapital >= 0.66;
+  const medioCapital = r.pCapital >= 0.33 && r.pCapital < 0.66;
+  const altoMeses = r.pMeses >= 0.66;
+  const bajoMeses = r.pMeses < 0.33;
+  const margenBajo = r.pMargenBajo >= 0.66;
+  const margenAlto = r.pMargenBajo < 0.33;
+  const sinVentaTotal = r.mesesSinVenta >= r.mesesMonitoreados;
+
+  if (sinVentaTotal && altoCapital) {
+    return {
+      titulo: "Cero ventas en todo el periodo - candidato a descontinuar",
+      texto: `No registra ninguna venta en los ${r.mesesMonitoreados} meses monitoreados, y hay bastante capital invertido en el. Es la senal mas fuerte posible: evaluar descontinuar el producto, liquidar el stock existente y no volver a comprarlo.`,
+    };
+  }
+  if (altoCapital && margenBajo && altoMeses) {
+    return {
+      titulo: "Liquidar con descuento agresivo",
+      texto: "Combina las tres senales de riesgo a la vez: mucho capital invertido, poco margen y muchos meses sin venderse. Es el peor escenario financiero posible para este producto: cada mes que sigue en bodega cuesta mas de lo que puede recuperar. Prioridad alta de liquidacion, incluso con descuento fuerte.",
+    };
+  }
+  if (altoCapital && margenAlto && altoMeses) {
+    return {
+      titulo: "Promocion o combo, no descuento profundo",
+      texto: "Tiene buen margen, asi que hay espacio para bajar el precio sin perder tanto y generar movimiento, en vez de liquidar de una vez. Considerar armar un combo con un producto de alta rotacion, o una promocion puntual.",
+    };
+  }
+  if (altoCapital && bajoMeses) {
+    return {
+      titulo: "Monitorear, aun no es pega confirmada",
+      texto: "Hay mucho capital invertido, pero todavia se ha vendido recientemente. Todavia no hay suficiente tiempo sin movimiento para considerarlo un problema real de rotacion. Revisar de nuevo el proximo mes.",
+    };
+  }
+  if (!altoCapital && !medioCapital && altoMeses && margenBajo) {
+    return {
+      titulo: "Baja prioridad, incluir en descuento general",
+      texto: "El monto de capital atrapado es bajo, asi que el impacto financiero de dejarlo quieto es menor. No amerita una accion dedicada; se puede incluir en una liquidacion general de temporada en vez de gestionarlo individualmente.",
+    };
+  }
+  if (!altoCapital && altoMeses && margenAlto) {
+    return {
+      titulo: "Evaluar devolucion a proveedor",
+      texto: "El capital atrapado es bajo y el margen es bueno, pero lleva muchos meses sin venderse. Si el proveedor tiene politica de devolucion o cambio, puede ser mejor negocio devolverlo que descontarlo.",
+    };
+  }
+  if (medioCapital && !altoMeses && !margenBajo) {
+    return {
+      titulo: "Sin accion inmediata",
+      texto: "Los indicadores estan en rango medio, sin ninguna senal fuerte de riesgo. Conviene monitorear en el proximo corte mensual en vez de tomar una accion ahora.",
+    };
+  }
+  return {
+    titulo: "Revisar en el proximo corte",
+    texto: "No hay una combinacion clara de senales de riesgo todavia. Conviene volver a evaluar este producto en el proximo listado mensual para ver como evoluciona.",
+  };
 }
 
 /* Detecta el simbolo de moneda tal como aparece en las columnas de costo/precio
@@ -198,11 +335,7 @@ function detectCurrencySymbol(rowsFormatted, idx) {
 }
 
 function sampleData() {
-  const sucursales = [
-    { s: "Central", bodegas: ["11", "13"] },
-    { s: "Esquina", bodegas: ["21", "22"] },
-    { s: "Hatillo", bodegas: ["31", "32"] },
-  ];
+  const sucursales = ["Central", "Esquina", "Hatillo"];
   const nombres = [
     "Perfume Aurea 100ml", "Perfume Nocturne 50ml", "Tenis runner blanco", "Tenis urban negro",
     "Perfume Velvet Rose", "Sandalia clasica", "Perfume Oud Intense", "Tenis skate gris",
@@ -211,26 +344,37 @@ function sampleData() {
   const rows = [];
   let n = 0;
   for (const suc of sucursales) {
-    for (const bod of suc.bodegas) {
-      for (let i = 0; i < 6; i++) {
-        n++;
-        const nombre = nombres[(n * 3) % nombres.length];
-        const costo = 8000 + ((n * 137) % 40000);
-        const stock = 1 + ((n * 5) % 30);
-        const diasAtras = 10 + ((n * 47) % 400);
-        const fecha = new Date(Date.now() - diasAtras * 86400000);
-        const margen = 8 + ((n * 13) % 45);
-        rows.push([suc.s, bod, `SKU-${1000 + n}`, nombre, costo, fecha, stock + 5, stock, margen,
-          costo * (1 + margen / 100), costo * (1 + margen / 100) * 1.13]);
+    for (let i = 0; i < 12; i++) {
+      n++;
+      const nombre = nombres[(n * 3) % nombres.length];
+      const costo = 8000 + ((n * 137) % 40000);
+      const stock = 1 + ((n * 5) % 30);
+      const margenPct = 8 + ((n * 13) % 45);
+      const precioSinImp = costo * (1 + margenPct / 100);
+      const precioConImp = precioSinImp * 1.13;
+      const mesesMonitoreados = 13;
+      // simula estacionalidad: algunos productos sin venta reciente, otros con venta activa
+      const patron = n % 4;
+      const ventasMensuales = Array.from({ length: mesesMonitoreados }, (_, m) => {
+        if (patron === 0) return 0; // sin ninguna venta
+        if (patron === 1 && m < mesesMonitoreados - 8) return 0; // sin venta hace 8 meses
+        return (n + m) % 5;
+      });
+      const ventaTotal = ventasMensuales.reduce((a, b) => a + b, 0);
+      const ventaPromedio = ventaTotal / mesesMonitoreados;
+      let mesesSinVenta = 0;
+      for (let m = ventasMensuales.length - 1; m >= 0; m--) {
+        if (ventasMensuales[m] > 0) break;
+        mesesSinVenta++;
       }
+      rows.push({
+        sucursal: suc, codigo: `SKU-${1000 + n}`, descripcion: nombre, costo, stock,
+        precioSinImp, precioConImp, margen: Math.round(margenPct * 10) / 10, margenEstimado: false,
+        ventaTotal, ventaPromedio: Math.round(ventaPromedio * 100) / 100, mesesSinVenta, mesesMonitoreados,
+      });
     }
   }
-  return [
-    ["sucursal", "bodega", "codigo", "descripcion", "costo de ultima compra", "fecha de ultima compra",
-      "cantidades compradas en total", "stock actual", "margen de ganancia",
-      "precio de venta sin impuesto", "precio de venta con impuesto"],
-    ...rows,
-  ];
+  return rows;
 }
 
 /* ====================== EXPORTACION ====================== */
@@ -238,9 +382,9 @@ function sampleData() {
 function exportExcel(rows, view, moneda) {
   const etiquetaCapital = moneda ? `Capital atrapado (${moneda})` : "Capital atrapado";
   const cols = rows.map((r) => ({
-    Codigo: r.codigo, Descripcion: r.descripcion, Sucursal: r.sucursal, Bodega: r.bodega,
+    Codigo: r.codigo, Descripcion: r.descripcion, Sucursal: r.sucursal, Grupo: grupoCalculado(r.score),
     Stock: r.stock, [etiquetaCapital]: Math.round(r.capitalAtrapado),
-    "Dias sin comprar": r.diasSinCompra ?? "", "Margen %": r.margen,
+    "Meses sin venta": r.mesesSinVenta ?? "", "Margen %": r.margen,
     ...(view !== "capital" ? { Score: Math.round(r.score * 100) } : {}),
   }));
   const ws = XLSX.utils.json_to_sheet(cols);
@@ -255,11 +399,11 @@ function buildPdfDoc(rows, view, titulo, moneda) {
   doc.text(titulo, 14, 15);
   doc.setFontSize(9);
   doc.text(`Generado ${new Date().toLocaleDateString("es-CR")}`, 14, 21);
-  const head = [["#", "Codigo", "Descripcion", "Sucursal", "Bodega", "Stock", "Capital atrapado", "Dias sin comprar", "Margen"]];
+  const head = [["#", "Codigo", "Descripcion", "Sucursal", "Grupo", "Stock", "Capital atrapado", "Meses sin venta", "Margen"]];
   if (view !== "capital") head[0].push("Score");
   const body = rows.map((r, i) => {
-    const row = [i + 1, r.codigo, r.descripcion, r.sucursal, r.bodega, r.stock,
-      money(r.capitalAtrapado, moneda), r.diasSinCompra ?? "-", `${r.margen}%`];
+    const row = [i + 1, r.codigo, r.descripcion, r.sucursal, grupoCalculado(r.score), r.stock,
+      money(r.capitalAtrapado, moneda), r.mesesSinVenta ?? "-", `${r.margen}%`];
     if (view !== "capital") row.push(Math.round(r.score * 100));
     return row;
   });
@@ -275,12 +419,11 @@ function exportPdf(rows, view, titulo, moneda) {
 /* ====================== COMPONENTE PRINCIPAL ====================== */
 
 function App() {
-  const [parsedRaw, setParsedRaw] = useState(() => parseRows(sampleData()));
+  const [parsedRaw, setParsedRaw] = useState(() => sampleData());
   const [usingSample, setUsingSample] = useState(true);
   const [fileName, setFileName] = useState("");
   const [view, setView] = useState("capital");
   const [sucursalFiltro, setSucursalFiltro] = useState("Todas");
-  const [bodegaFiltro, setBodegaFiltro] = useState("Todas");
   const [topN, setTopN] = useState(20);
   const [error, setError] = useState("");
   const [tab, setTab] = useState("analisis");
@@ -295,6 +438,11 @@ function App() {
   const [previewFilas, setPreviewFilas] = useState([]);
   const [previewVista, setPreviewVista] = useState("capital");
   const [previewPdfUrl, setPreviewPdfUrl] = useState(null);
+  const [theme, setTheme] = useState("light");
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }, [theme]);
 
   const supabaseListo = !!supabaseClient;
 
@@ -321,23 +469,51 @@ function App() {
       try {
         const data = new Uint8Array(evt.target.result);
         const wb = XLSX.read(data, { type: "array", cellDates: true });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
-        const parsed = parseRows(rows);
-        if (!parsed.length) {
-          setError("No se encontraron filas con codigo valido. Revisa los encabezados del Excel.");
+
+        const nombresHojas = wb.SheetNames;
+        const hojasSucursal = nombresHojas.filter((n) =>
+          SUCURSALES_ESPERADAS.includes(n.trim().toUpperCase())
+        );
+        if (!hojasSucursal.length) {
+          setError(`No encontre hojas llamadas ${SUCURSALES_ESPERADAS.join(", ")}. Hojas en el archivo: ${nombresHojas.join(", ")}`);
           return;
         }
-        const rowsFormateadas = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
-        const simboloDetectado = detectCurrencySymbol(rowsFormateadas, buildColumnIndex(rows[0] || []));
+
+        const hojaLookup = nombresHojas.find((n) => normalizeHeader(n).includes("codigos"));
+        let marginLookup = {};
+        if (hojaLookup) {
+          const rowsLookup = XLSX.utils.sheet_to_json(wb.Sheets[hojaLookup], { header: 1, raw: true });
+          marginLookup = parseMarginLookup(rowsLookup);
+        }
+
+        let parsedTotal = [];
+        let simboloDetectado = null;
+        for (const nombreHoja of hojasSucursal) {
+          const sheet = wb.Sheets[nombreHoja];
+          const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
+          const sucursalLabel = nombreHoja.trim();
+          const parsedHoja = parseSucursalSheet(rows, sucursalLabel, marginLookup);
+          parsedTotal = parsedTotal.concat(parsedHoja);
+
+          if (!simboloDetectado) {
+            const rowsFormateadas = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
+            const idx = buildColumnIndex(rows[0] || []);
+            simboloDetectado = detectCurrencySymbol(rowsFormateadas, idx);
+          }
+        }
+
+        if (!parsedTotal.length) {
+          setError("No se encontraron filas con codigo valido en ninguna hoja de sucursal.");
+          return;
+        }
+
         setMoneda(simboloDetectado || "₡");
-        setParsedRaw(parsed);
+        setParsedRaw(parsedTotal);
         setUsingSample(false);
-        setFileName(file.name);
+        setFileName(`${file.name} (${hojasSucursal.join(", ")})`);
         setSucursalFiltro("Todas");
-        setBodegaFiltro("Todas");
       } catch (err) {
-        setError("No se pudo leer el archivo. Verifica que sea un .xlsx o .csv valido.");
+        setError("No se pudo leer el archivo: " + err.message);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -376,16 +552,9 @@ function App() {
     return ["Todas", ...Array.from(set).sort()];
   }, [enriched]);
 
-  const bodegas = useMemo(() => {
-    const scoped = sucursalFiltro === "Todas" ? enriched : enriched.filter((r) => r.sucursal === sucursalFiltro);
-    const set = new Set(scoped.map((r) => r.bodega));
-    return ["Todas", ...Array.from(set).sort()];
-  }, [enriched, sucursalFiltro]);
-
   const filtered = useMemo(() => enriched.filter((r) =>
-    (sucursalFiltro === "Todas" || r.sucursal === sucursalFiltro) &&
-    (bodegaFiltro === "Todas" || r.bodega === bodegaFiltro)
-  ), [enriched, sucursalFiltro, bodegaFiltro]);
+    (sucursalFiltro === "Todas" || r.sucursal === sucursalFiltro)
+  ), [enriched, sucursalFiltro]);
 
   const sorted = useMemo(() => {
     const copy = [...filtered];
@@ -393,6 +562,11 @@ function App() {
     else copy.sort((a, b) => b.score - a.score);
     return copy.slice(0, topN);
   }, [filtered, view, topN]);
+
+  const estrategiaLista = useMemo(() => {
+    const copy = [...filtered].sort((a, b) => b.score - a.score);
+    return copy.slice(0, topN);
+  }, [filtered, topN]);
 
   const totals = useMemo(() => ({
     capitalTotal: filtered.reduce((s, r) => s + r.capitalAtrapado, 0),
@@ -447,33 +621,42 @@ function App() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto p-4 space-y-5 text-stone-800">
+    <div className="max-w-6xl mx-auto p-4 space-y-5 text-stone-800 dark:text-stone-100 min-h-screen">
       <div className="h-1 w-full rounded-full mb-1" style={{ background: "linear-gradient(90deg, #059669 0%, #2563eb 50%, #7c3aed 100%)" }} />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-stone-900">Analisis de pegas</h1>
-          <p className="text-sm text-stone-500">Productos de baja rotacion por sucursal y bodega</p>
+          <h1 className="text-xl font-semibold text-stone-900 dark:text-stone-50">Analisis de pegas</h1>
+          <p className="text-sm text-stone-500 dark:text-stone-400">Productos de baja rotacion por sucursal</p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => setTab("analisis")}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === "analisis" ? "bg-emerald-600 text-white border-emerald-600" : "border-stone-300 text-stone-600"}`}>
+            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === "analisis" ? "bg-emerald-600 text-white border-emerald-600" : "border-stone-300 dark:border-stone-700 text-stone-600 dark:text-stone-300"}`}>
             Analisis
           </button>
+          <button onClick={() => setTab("estrategia")}
+            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === "estrategia" ? "bg-violet-600 text-white border-violet-600" : "border-stone-300 dark:border-stone-700 text-stone-600 dark:text-stone-300"}`}>
+            Estrategia financiera
+          </button>
           <button onClick={() => setTab("historial")}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === "historial" ? "bg-blue-600 text-white border-blue-600" : "border-stone-300 text-stone-600"}`}>
+            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === "historial" ? "bg-blue-600 text-white border-blue-600" : "border-stone-300 dark:border-stone-700 text-stone-600 dark:text-stone-300"}`}>
             Historial
+          </button>
+          <button onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+            title="Cambiar modo claro/oscuro"
+            className="px-3 py-1.5 rounded-lg text-sm border border-stone-300 dark:border-stone-700 text-stone-600 dark:text-stone-300">
+            {theme === "light" ? "🌙" : "☀️"}
           </button>
         </div>
       </div>
 
       {!supabaseListo && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
+        <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
           Supabase no esta configurado en este archivo todavia (edita SUPABASE_URL y SUPABASE_ANON_KEY al inicio del HTML). El historial no funcionara hasta que lo conectes.
         </div>
       )}
 
       {tab === "historial" ? (
-        <div className="border border-stone-200 rounded-lg divide-y divide-stone-100">
+        <div className="border border-stone-200 dark:border-stone-800 rounded-lg divide-y divide-stone-100 dark:divide-stone-800">
           {historial.length === 0 && (
             <p className="p-4 text-sm text-stone-400">No hay cargas guardadas todavia.</p>
           )}
@@ -489,6 +672,34 @@ function App() {
             </div>
           ))}
         </div>
+      ) : tab === "estrategia" ? (
+        <div className="space-y-3">
+          <p className="text-sm text-stone-500 dark:text-stone-400">
+            Sugerencias generadas por reglas segun capital atrapado, meses sin venta y margen de cada producto (filtro y Top actuales). No son ideas de mercadeo/publicidad, son acciones financieras: liquidar, promocionar, devolver a proveedor o monitorear.
+          </p>
+          {estrategiaLista.length === 0 && (
+            <p className="text-sm text-stone-400 p-4">Sin datos para este filtro.</p>
+          )}
+          {estrategiaLista.map((r, i) => {
+            const est = estrategiaFinanciera(r);
+            const grupo = grupoCalculado(r.score);
+            return (
+              <div key={`${r.codigo}-${i}`} className="border border-stone-200 dark:border-stone-800 rounded-lg p-3 space-y-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-medium text-stone-900 dark:text-stone-50">{r.codigo} - {r.descripcion}</p>
+                    <p className="text-xs text-stone-500 dark:text-stone-400">{r.sucursal} - Stock {r.stock} - Capital {money(r.capitalAtrapado, moneda)}</p>
+                  </div>
+                  <span className={`shrink-0 inline-block w-6 h-6 leading-6 text-center rounded-full text-xs font-semibold ${grupoBadgeClasses(grupo)}`}>
+                    {grupo}
+                  </span>
+                </div>
+                <p className="text-sm font-medium text-violet-700 dark:text-violet-400">{est.titulo}</p>
+                <p className="text-sm text-stone-600 dark:text-stone-300">{est.texto}</p>
+              </div>
+            );
+          })}
+        </div>
       ) : (
         <React.Fragment>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -498,7 +709,7 @@ function App() {
                 <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
               </label>
               {!usingSample && (
-                <button onClick={() => { setParsedRaw(parseRows(sampleData())); setUsingSample(true); setFileName(""); setMoneda("₡"); }}
+                <button onClick={() => { setParsedRaw(sampleData()); setUsingSample(true); setFileName(""); setMoneda("₡"); }}
                   className="px-3 py-2 border border-stone-300 rounded-lg text-sm hover:bg-stone-50">
                   Datos de ejemplo
                 </button>
@@ -555,13 +766,9 @@ function App() {
               Candidatos reales a pega
             </button>
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              <select value={sucursalFiltro} onChange={(e) => { setSucursalFiltro(e.target.value); setBodegaFiltro("Todas"); }}
-                className="text-sm border border-stone-300 rounded-lg px-2 py-1.5">
+              <select value={sucursalFiltro} onChange={(e) => setSucursalFiltro(e.target.value)}
+                className="text-sm border border-stone-300 dark:border-stone-700 dark:bg-stone-800 rounded-lg px-2 py-1.5">
                 {sucursales.map((s) => <option key={s} value={s}>{s === "Todas" ? "Todas las sucursales" : s}</option>)}
-              </select>
-              <select value={bodegaFiltro} onChange={(e) => setBodegaFiltro(e.target.value)}
-                className="text-sm border border-stone-300 rounded-lg px-2 py-1.5">
-                {bodegas.map((b) => <option key={b} value={b}>{b === "Todas" ? "Todas las bodegas" : `Bodega ${b}`}</option>)}
               </select>
               <select value={topN} onChange={(e) => setTopN(Number(e.target.value))}
                 className="text-sm border border-stone-300 rounded-lg px-2 py-1.5">
@@ -570,33 +777,37 @@ function App() {
             </div>
           </div>
 
-          <div className="overflow-x-auto border border-stone-200 rounded-lg">
+          <div className="overflow-x-auto border border-stone-200 dark:border-stone-800 rounded-lg">
             <table className="w-full text-sm">
-              <thead className="bg-stone-50 text-stone-500 text-xs uppercase tracking-wide">
+              <thead className="bg-stone-50 dark:bg-stone-900 text-stone-500 dark:text-stone-400 text-xs uppercase tracking-wide">
                 <tr>
                   <th className="text-left px-3 py-2 font-medium">#</th>
                   <th className="text-left px-3 py-2 font-medium">Codigo</th>
                   <th className="text-left px-3 py-2 font-medium">Descripcion</th>
                   <th className="text-left px-3 py-2 font-medium">Sucursal</th>
-                  <th className="text-left px-3 py-2 font-medium">Bodega</th>
+                  <th className="text-center px-3 py-2 font-medium">Grupo</th>
                   <th className="text-right px-3 py-2 font-medium">Stock</th>
                   <th className="text-right px-3 py-2 font-medium">Capital atrapado</th>
-                  <th className="text-right px-3 py-2 font-medium">Dias sin comprar</th>
+                  <th className="text-right px-3 py-2 font-medium">Meses sin venta</th>
                   <th className="text-right px-3 py-2 font-medium">Margen</th>
                   {view === "pega" && <th className="text-right px-3 py-2 font-medium">Score</th>}
                 </tr>
               </thead>
               <tbody>
                 {sorted.map((r, i) => (
-                  <tr key={`${r.codigo}-${r.sucursal}-${r.bodega}-${i}`} className="border-t border-stone-100 hover:bg-stone-50">
+                  <tr key={`${r.codigo}-${r.sucursal}-${i}`} className="border-t border-stone-100 dark:border-stone-800 hover:bg-stone-50 dark:hover:bg-stone-900">
                     <td className="px-3 py-2 text-stone-400">{i + 1}</td>
                     <td className="px-3 py-2 font-medium">{r.codigo}</td>
-                    <td className="px-3 py-2 text-stone-600">{r.descripcion}</td>
-                    <td className="px-3 py-2 text-stone-600">{r.sucursal}</td>
-                    <td className="px-3 py-2 text-stone-600">{r.bodega}</td>
+                    <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.descripcion}</td>
+                    <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.sucursal}</td>
+                    <td className="px-3 py-2 text-center">
+                      <span className={`inline-block w-6 h-6 leading-6 rounded-full text-xs font-semibold ${grupoBadgeClasses(grupoCalculado(r.score))}`}>
+                        {grupoCalculado(r.score)}
+                      </span>
+                    </td>
                     <td className="px-3 py-2 text-right">{r.stock}</td>
                     <td className="px-3 py-2 text-right font-medium">{money(r.capitalAtrapado, moneda)}</td>
-                    <td className="px-3 py-2 text-right">{r.diasSinCompra ?? "-"}</td>
+                    <td className="px-3 py-2 text-right">{r.mesesSinVenta ?? "-"}</td>
                     <td className="px-3 py-2 text-right">{r.margen}%</td>
                     {view === "pega" && (
                       <td className="px-3 py-2 text-right">
@@ -623,16 +834,15 @@ function App() {
           )}
 
           <p className="text-xs text-stone-400">
-            Capital atrapado = costo de ultima compra x stock actual. Score de pega combina capital atrapado, dias sin comprar
-            y margen bajo, segun la posicion relativa dentro del filtro actual. Sin datos de venta real, estos son indicadores
-            basados en compra e inventario, no rotacion confirmada.
+            Capital atrapado = costo x stock actual. Score de pega combina capital atrapado, meses consecutivos sin venta
+            y margen bajo, segun la posicion relativa dentro del filtro actual (venta real de los ultimos {parsedRaw[0]?.mesesMonitoreados || 13} meses, no un estimado por compra).
           </p>
         </React.Fragment>
       )}
 
       {reportModal && !previewMode && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl p-5 w-full max-w-sm space-y-4">
+          <div className="bg-white dark:bg-stone-900 rounded-xl p-5 w-full max-w-sm space-y-4">
             <h2 className="font-medium text-stone-900">Generar reporte</h2>
 
             <div>
@@ -680,7 +890,7 @@ function App() {
 
       {reportModal && previewMode && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl p-5 w-full max-w-3xl max-h-[85vh] flex flex-col space-y-3">
+          <div className="bg-white dark:bg-stone-900 rounded-xl p-5 w-full max-w-3xl max-h-[85vh] flex flex-col space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="font-medium text-stone-900">
                 Vista previa - {previewVista === "capital" ? "Mayor capital atrapado" : "Candidatos reales a pega"}
@@ -697,31 +907,35 @@ function App() {
                 <p className="text-sm text-stone-400">Generando vista previa...</p>
               )
             ) : (
-              <div className="overflow-auto border border-stone-200 rounded-lg flex-1">
+              <div className="overflow-auto border border-stone-200 dark:border-stone-800 rounded-lg flex-1">
                 <table className="w-full text-sm">
-                  <thead className="bg-stone-50 text-stone-500 text-xs uppercase tracking-wide sticky top-0">
+                  <thead className="bg-stone-50 dark:bg-stone-900 text-stone-500 dark:text-stone-400 text-xs uppercase tracking-wide sticky top-0">
                     <tr>
                       <th className="text-left px-3 py-2 font-medium">Codigo</th>
                       <th className="text-left px-3 py-2 font-medium">Descripcion</th>
                       <th className="text-left px-3 py-2 font-medium">Sucursal</th>
-                      <th className="text-left px-3 py-2 font-medium">Bodega</th>
+                      <th className="text-center px-3 py-2 font-medium">Grupo</th>
                       <th className="text-right px-3 py-2 font-medium">Stock</th>
                       <th className="text-right px-3 py-2 font-medium">Capital atrapado</th>
-                      <th className="text-right px-3 py-2 font-medium">Dias sin comprar</th>
+                      <th className="text-right px-3 py-2 font-medium">Meses sin venta</th>
                       <th className="text-right px-3 py-2 font-medium">Margen</th>
                       {previewVista === "pega" && <th className="text-right px-3 py-2 font-medium">Score</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {previewFilas.map((r, i) => (
-                      <tr key={`${r.codigo}-${i}`} className="border-t border-stone-100">
+                      <tr key={`${r.codigo}-${i}`} className="border-t border-stone-100 dark:border-stone-800">
                         <td className="px-3 py-2 font-medium">{r.codigo}</td>
-                        <td className="px-3 py-2 text-stone-600">{r.descripcion}</td>
-                        <td className="px-3 py-2 text-stone-600">{r.sucursal}</td>
-                        <td className="px-3 py-2 text-stone-600">{r.bodega}</td>
+                        <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.descripcion}</td>
+                        <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.sucursal}</td>
+                        <td className="px-3 py-2 text-center">
+                          <span className={`inline-block w-6 h-6 leading-6 rounded-full text-xs font-semibold ${grupoBadgeClasses(grupoCalculado(r.score))}`}>
+                            {grupoCalculado(r.score)}
+                          </span>
+                        </td>
                         <td className="px-3 py-2 text-right">{r.stock}</td>
                         <td className="px-3 py-2 text-right font-medium">{money(r.capitalAtrapado, moneda)}</td>
-                        <td className="px-3 py-2 text-right">{r.diasSinCompra ?? "-"}</td>
+                        <td className="px-3 py-2 text-right">{r.mesesSinVenta ?? "-"}</td>
                         <td className="px-3 py-2 text-right">{r.margen}%</td>
                         {previewVista === "pega" && (
                           <td className="px-3 py-2 text-right">
