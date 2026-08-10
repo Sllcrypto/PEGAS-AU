@@ -898,6 +898,31 @@ function descuentoSugerido(r, maxPct) {
   return { pct, precioNuevo };
 }
 
+/* Cada proveedor de correo web tiene su propia URL de "componer mensaje"
+   con destinatario/asunto/cuerpo prellenados. Ninguno permite adjuntar un
+   archivo por enlace (restriccion de seguridad de todos los navegadores,
+   no de un proveedor en particular) — el archivo siempre se adjunta a mano
+   despues de descargarlo. "otro" cae al mailto: del sistema, que respeta
+   lo que el usuario tenga configurado como cliente de correo predeterminado. */
+const PROVEEDORES_CORREO = {
+  gmail: {
+    label: "Gmail",
+    url: (para, asunto, cuerpo) => `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(para)}&su=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`,
+  },
+  outlook: {
+    label: "Outlook",
+    url: (para, asunto, cuerpo) => `https://outlook.live.com/mail/0/deeplink/compose?to=${encodeURIComponent(para)}&subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`,
+  },
+  yahoo: {
+    label: "Yahoo",
+    url: (para, asunto, cuerpo) => `https://compose.mail.yahoo.com/?to=${encodeURIComponent(para)}&subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`,
+  },
+  otro: {
+    label: "Otro / predeterminado",
+    url: null, // se maneja aparte con mailto:, ver abrirCorreo()
+  },
+};
+
 function estrategiaAvanzada(r, ctx) {
   const fmt = (n) => money(n, ctx.moneda);
   const altoCapital = r.pCapital >= 0.66;
@@ -1235,6 +1260,7 @@ function App() {
   const [reportVista, setReportVista] = useState("actual");
   const [reportFormato, setReportFormato] = useState("pdf");
   const [correoDestino, setCorreoDestino] = useState("");
+  const [correoProveedor, setCorreoProveedor] = useState("gmail");
   const [moneda, setMoneda] = useState("₡");
   const [previewMode, setPreviewMode] = useState(false);
   const [previewFilas, setPreviewFilas] = useState([]);
@@ -1521,11 +1547,17 @@ function App() {
   }
 
   function abrirCorreo() {
-    const asunto = encodeURIComponent("Reporte de pegas - " + new Date().toLocaleDateString("es-CR"));
-    const cuerpo = encodeURIComponent(
-      "Buenas,\n\nAdjunto el reporte de productos de baja rotacion (pegas).\n\nSaludos."
-    );
-    window.location.href = `mailto:${correoDestino}?subject=${asunto}&body=${cuerpo}`;
+    const asunto = "Reporte de pegas - " + new Date().toLocaleDateString("es-CR");
+    const cuerpo = "Buenas,\n\nAdjunto el reporte de productos de baja rotacion (pegas).\n\nSaludos.";
+    const para = correoDestino || "";
+    const proveedor = PROVEEDORES_CORREO[correoProveedor];
+    if (!proveedor || !proveedor.url) {
+      // "Otro / predeterminado": usa el mailto: del sistema, que respeta
+      // lo que el usuario tenga configurado (Outlook de escritorio, etc).
+      window.location.href = `mailto:${para}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`;
+      return;
+    }
+    window.open(proveedor.url(para, asunto, cuerpo), "_blank", "noopener,noreferrer");
   }
 
   const TABS = [
@@ -2042,6 +2074,20 @@ function App() {
               placeholder="gerencia@empresa.com" className={DS.inputClass} />
           </DS.Field>
 
+          <DS.Field label="Enviar usando">
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(PROVEEDORES_CORREO).map(([key, p]) => (
+                <button key={key} type="button" onClick={() => setCorreoProveedor(key)}
+                  className={`px-3 py-1.5 rounded-lg text-sm border ${correoProveedor === key ? "bg-blue-600 text-white border-blue-600" : "border-stone-300 dark:border-stone-700 text-stone-600 dark:text-stone-300"}`}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-stone-400 mt-1">
+              Se abrira una pestana con el correo ya redactado (destinatario, asunto y mensaje). El archivo se adjunta a mano despues de descargarlo.
+            </p>
+          </DS.Field>
+
           <div className="flex gap-2 pt-2">
             <DS.Button theme={THEME} variant="primary" className="flex-1" onClick={verVistaPrevia}>
               Ver vista previa
@@ -2122,8 +2168,8 @@ function App() {
               </DS.Button>
             </div>
             <p className="text-xs text-stone-400">
-              Revisa la vista previa antes de descargar. El boton "Abrir correo" prepara el mensaje en tu app de correo;
-              el archivo lo adjuntas manualmente despues de descargarlo (los navegadores no permiten adjuntar automaticamente).
+              Revisa la vista previa antes de descargar. El boton "Abrir correo" abre {PROVEEDORES_CORREO[correoProveedor].label} con el mensaje ya redactado;
+              el archivo lo adjuntas manualmente despues de descargarlo (ningun navegador permite adjuntar automaticamente por seguridad).
             </p>
         </DS.Modal>
       )}
