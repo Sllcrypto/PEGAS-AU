@@ -858,9 +858,48 @@ function grupoCalculado(score) {
   return "C";
 }
 
-/* Motor de estrategia financiera por reglas (sin IA externa). Usa los percentiles ya calculados
-   en withScore: pCapital, pDias, pMargenBajo, ademas del score general. */
-function estrategiaFinanciera(r) {
+/* ====================== ESTRATEGIA FINANCIERA AVANZADA ======================
+   Motor de planes por fases (sin IA externa). Simula el criterio combinado de
+   un estratega de mercadeo (como mover el producto sin devaluar la marca) y
+   un CFO (proteger el capital, saber cuando cortar perdidas). Cada arquetipo
+   entrega un plan de 1-3 fases con acciones concretas y numeros calculados
+   desde el propio producto (nunca genericos), un criterio de exito por fase,
+   y que hacer si esa fase no funciona.
+   Usa los percentiles ya calculados en withScore: pCapital, pMeses, pMargenBajo. */
+
+const ARCHETYPE_INFO = {
+  salida_rapida: { label: "Salida rapida", color: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300" },
+  liquidacion_agresiva: { label: "Liquidar con descuento", color: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300" },
+  promocion_combo: { label: "Combo primero", color: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300" },
+  monitorear: { label: "Monitorear", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" },
+  baja_prioridad: { label: "Baja prioridad", color: "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300" },
+  evaluar_devolucion: { label: "Evaluar devolucion", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300" },
+  sin_accion: { label: "Sin accion", color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" },
+  revisar_proximo_corte: { label: "Revisar despues", color: "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300" },
+};
+
+/* Precio de venta actual (sin impuesto) y el "piso" bajo el cual ya no
+   conviene bajar mas (margen minimo aceptable del 5% sobre costo). */
+function precioBaseYPiso(r) {
+  const precioActual = r.precioSinImp > 0 ? r.precioSinImp : (r.precioConImp > 0 ? r.precioConImp / 1.13 : 0);
+  const precioPiso = r.costo * 1.05;
+  return { precioActual, precioPiso };
+}
+
+/* Calcula un descuento real (no arbitrario): el maximo posible sin perforar
+   el piso de margen minimo, topado a maxPct para que la rebaja siga siendo
+   creible como promocion y no como panico. */
+function descuentoSugerido(r, maxPct) {
+  const { precioActual, precioPiso } = precioBaseYPiso(r);
+  if (precioActual <= 0) return { pct: 0, precioNuevo: 0 };
+  let pct = Math.round((1 - precioPiso / precioActual) * 100);
+  pct = Math.max(5, Math.min(pct, maxPct));
+  const precioNuevo = Math.round(precioActual * (1 - pct / 100));
+  return { pct, precioNuevo };
+}
+
+function estrategiaAvanzada(r, ctx) {
+  const fmt = (n) => money(n, ctx.moneda);
   const altoCapital = r.pCapital >= 0.66;
   const medioCapital = r.pCapital >= 0.33 && r.pCapital < 0.66;
   const altoMeses = r.pMeses >= 0.66;
@@ -869,51 +908,210 @@ function estrategiaFinanciera(r) {
   const margenAlto = r.pMargenBajo < 0.33;
   const sinVentaTotal = r.mesesSinVenta >= r.mesesMonitoreados;
 
+  const socio = ctx.topSellerPorSucursal[r.sucursal];
+  const socioValido = socio && socio.codigo !== r.codigo ? socio : null;
+  const otraSucursal = ctx.mejorSucursalPorCodigo[r.codigo];
+  const trasladoValido = otraSucursal && otraSucursal.sucursal !== r.sucursal
+    && otraSucursal.ventaPromedio > (r.ventaPromedio || 0) * 1.5 ? otraSucursal : null;
+
+  // Arquetipo 1: cero ventas en todo el periodo + mucho capital -> cortar perdidas ya.
   if (sinVentaTotal && altoCapital) {
+    const d = descuentoSugerido(r, 45);
     return {
-      titulo: "Cero ventas en todo el periodo - candidato a descontinuar",
-      texto: `No registra ninguna venta en los ${r.mesesMonitoreados} meses monitoreados, y hay bastante capital invertido en el. Es la senal mas fuerte posible: evaluar descontinuar el producto, liquidar el stock existente y no volver a comprarlo.`,
+      archetype: "salida_rapida",
+      diagnostico: `Cero movimiento en ${r.mesesMonitoreados} meses con ${fmt(r.capitalAtrapado)} de capital inmovilizado. No hay evidencia de que vaya a rotar solo: la prioridad es recuperar capital, no proteger margen.`,
+      fases: [
+        {
+          nombre: "Fase 1 - Liquidacion relampago",
+          duracion: "2 semanas",
+          acciones: [
+            `Bajar el precio a ${fmt(d.precioNuevo)} (antes ${fmt(precioBaseYPiso(r).precioActual)}, ${d.pct}% de descuento) marcado como "oferta relampago".`,
+            "Ubicarlo en punto visible (vitrina, mostrador o destacado en catalogo digital) los primeros dias.",
+            trasladoValido
+              ? `Antes de rematar, evaluar trasladarlo a ${otraSucursal.sucursal}: ese mismo codigo vende ahi unas ${Math.round(otraSucursal.ventaPromedio)} u/mes, mas que aqui.`
+              : "Avisar por WhatsApp o redes a los clientes frecuentes de esta sucursal.",
+          ],
+          exito: "Se vende al menos la mitad del stock en las 2 semanas.",
+          siNoFunciona: "Pasar a Fase 2: salida total.",
+        },
+        {
+          nombre: "Fase 2 - Salida total",
+          duracion: "Inmediata despues de fase 1",
+          acciones: [
+            "Consultar al proveedor si acepta devolucion, cambio por otro producto o nota de credito.",
+            `Si no hay devolucion posible, liquidar el resto a precio de costo (${fmt(r.costo)}) o menos: aqui recuperar capital pesa mas que proteger margen.`,
+            "Dar de baja el remanente que no se venda y no volver a comprar este producto.",
+          ],
+          exito: "Bodega libre del producto y capital recuperado, aunque sea parcial.",
+          siNoFunciona: null,
+        },
+      ],
     };
   }
+
+  // Arquetipo 2: mucho capital + margen ya delgado + muchos meses -> el peor caso.
   if (altoCapital && margenBajo && altoMeses) {
+    const d = descuentoSugerido(r, 20);
     return {
-      titulo: "Liquidar con descuento agresivo",
-      texto: "Combina las tres senales de riesgo a la vez: mucho capital invertido, poco margen y muchos meses sin venderse. Es el peor escenario financiero posible para este producto: cada mes que sigue en bodega cuesta mas de lo que puede recuperar. Prioridad alta de liquidacion, incluso con descuento fuerte.",
+      archetype: "liquidacion_agresiva",
+      diagnostico: `Combina las tres senales a la vez: mucho capital (${fmt(r.capitalAtrapado)}), margen ya delgado (${r.margen}%) y ${r.mesesSinVenta} meses sin venderse. Cada mes adicional en bodega cuesta mas de lo que puede recuperar.`,
+      fases: [
+        {
+          nombre: "Fase 1 - Precio especial por tiempo limitado",
+          duracion: "30 dias",
+          acciones: [
+            `Bajar el precio a ${fmt(d.precioNuevo)} (${d.pct}% de descuento, calculado para no vender debajo de costo) por 30 dias.`,
+            "Presentarlo como precio especial temporal, no como remate permanente, para no devaluar el producto de una vez.",
+            "Revisar la venta cada semana; si a mitad del periodo no repunta, saltar directo a Fase 2.",
+          ],
+          exito: `Vende al menos el doble de su promedio historico (${Math.round((r.ventaPromedio || 0) * 2)} u en el mes).`,
+          siNoFunciona: "Pasar a Fase 2: combo forzado.",
+        },
+        {
+          nombre: "Fase 2 - Combo forzado",
+          duracion: "Siguiente mes",
+          acciones: [
+            socioValido
+              ? `Armar combo con "${socioValido.descripcion}" (vende ~${Math.round(socioValido.ventaPromedio)} u/mes en esta sucursal): "lleve ambos con descuento adicional".`
+              : "Armar combo con el producto de mayor rotacion disponible en esta sucursal.",
+            "Mover el combo a exhibicion junto al producto de alta rotacion, no dejarlo en su lugar habitual.",
+          ],
+          exito: "El stock baja de forma sostenida, aunque sea via el combo y no por venta individual.",
+          siNoFunciona: `Pasar a liquidacion final: vender el resto a costo (${fmt(r.costo)}) o gestionar devolucion con el proveedor.`,
+        },
+      ],
     };
   }
+
+  // Arquetipo 3: mucho capital pero con margen bueno -> hay espacio, empezar por combo, no por precio.
   if (altoCapital && margenAlto && altoMeses) {
+    const d = descuentoSugerido(r, 15);
     return {
-      titulo: "Promocion o combo, no descuento profundo",
-      texto: "Tiene buen margen, asi que hay espacio para bajar el precio sin perder tanto y generar movimiento, en vez de liquidar de una vez. Considerar armar un combo con un producto de alta rotacion, o una promocion puntual.",
+      archetype: "promocion_combo",
+      diagnostico: `Tiene margen sano (${r.margen}%) pese a llevar ${r.mesesSinVenta} meses sin venderse, con ${fmt(r.capitalAtrapado)} de capital en juego. Hay espacio para maniobrar sin sacrificar precio de una vez.`,
+      fases: [
+        {
+          nombre: "Fase 1 - Combo o regalo con compra",
+          duracion: "3-4 semanas",
+          acciones: [
+            socioValido
+              ? `Combinarlo con "${socioValido.descripcion}" (el producto que mas rota en esta sucursal, ~${Math.round(socioValido.ventaPromedio)} u/mes): se mueve el inventario sin tocar el precio de lista.`
+              : "Ofrecerlo como regalo o valor agregado en compras sobre cierto monto, aprovechando que el margen lo permite.",
+            "Capacitar al equipo de venta para que lo sugiera activamente como complemento, no como oferta de descuento.",
+          ],
+          exito: "El stock se reduce de forma visible sin tocar el precio publicado.",
+          siNoFunciona: "Pasar a Fase 2: promocion con descuento moderado.",
+        },
+        {
+          nombre: "Fase 2 - Descuento moderado",
+          duracion: "Siguiente mes",
+          acciones: [
+            `Bajar el precio a ${fmt(d.precioNuevo)} (${d.pct}% de descuento) por tiempo limitado, todavia dentro de un margen saludable.`,
+          ],
+          exito: "Vuelve a venderse a ritmo normal dentro del mes.",
+          siNoFunciona: "Si sigue sin moverse tras dos meses de intentos, reclasificar como candidato a liquidacion agresiva en el proximo corte.",
+        },
+      ],
     };
   }
+
+  // Arquetipo 4: mucho capital pero vendio recientemente -> aun no es una pega real.
   if (altoCapital && bajoMeses) {
     return {
-      titulo: "Monitorear, aun no es pega confirmada",
-      texto: "Hay mucho capital invertido, pero todavia se ha vendido recientemente. Todavia no hay suficiente tiempo sin movimiento para considerarlo un problema real de rotacion. Revisar de nuevo el proximo mes.",
+      archetype: "monitorear",
+      diagnostico: `Hay bastante capital invertido (${fmt(r.capitalAtrapado)}), pero todavia se vendio hace poco. Todavia no hay suficiente tiempo sin movimiento para tratarlo como problema de rotacion.`,
+      fases: [
+        {
+          nombre: "Seguimiento",
+          duracion: "Revisar el proximo corte mensual",
+          acciones: [
+            "No tocar el precio todavia; no hay senal suficiente de estancamiento.",
+            "Evitar comprar mas unidades de este producto hasta ver como evoluciona el siguiente mes.",
+          ],
+          exito: null,
+          siNoFunciona: null,
+        },
+      ],
     };
   }
+
+  // Arquetipo 5: capital bajo, margen bajo, muchos meses -> no amerita gestion dedicada.
   if (!altoCapital && !medioCapital && altoMeses && margenBajo) {
     return {
-      titulo: "Baja prioridad, incluir en descuento general",
-      texto: "El monto de capital atrapado es bajo, asi que el impacto financiero de dejarlo quieto es menor. No amerita una accion dedicada; se puede incluir en una liquidacion general de temporada en vez de gestionarlo individualmente.",
+      archetype: "baja_prioridad",
+      diagnostico: `El capital atrapado (${fmt(r.capitalAtrapado)}) es bajo, asi que el impacto financiero de dejarlo quieto es menor. No justifica tiempo de gestion individual.`,
+      fases: [
+        {
+          nombre: "Incluir en liquidacion general",
+          duracion: "Proxima liquidacion de temporada",
+          acciones: [
+            "Sumarlo al lote de descuento general o outlet en vez de darle seguimiento dedicado.",
+            "No repetir la compra de este producto salvo pedido puntual de un cliente.",
+          ],
+          exito: null,
+          siNoFunciona: null,
+        },
+      ],
     };
   }
+
+  // Arquetipo 6: capital bajo, margen bueno, muchos meses -> mejor negociar devolucion.
   if (!altoCapital && altoMeses && margenAlto) {
     return {
-      titulo: "Evaluar devolucion a proveedor",
-      texto: "El capital atrapado es bajo y el margen es bueno, pero lleva muchos meses sin venderse. Si el proveedor tiene politica de devolucion o cambio, puede ser mejor negocio devolverlo que descontarlo.",
+      archetype: "evaluar_devolucion",
+      diagnostico: `El capital atrapado es bajo (${fmt(r.capitalAtrapado)}) y el margen es bueno (${r.margen}%), pero lleva ${r.mesesSinVenta} meses sin venderse. Devolverlo puede ser mejor negocio que descontarlo.`,
+      fases: [
+        {
+          nombre: "Fase 1 - Negociar con el proveedor",
+          duracion: "Esta semana",
+          acciones: [
+            "Consultar si el proveedor acepta devolucion, cambio por otro producto o nota de credito.",
+          ],
+          exito: "El proveedor acepta devolucion o cambio.",
+          siNoFunciona: "Pasar a Fase 2.",
+        },
+        {
+          nombre: "Fase 2 - Aprovechar el margen sin bajar precio",
+          duracion: "Si no hay devolucion",
+          acciones: [
+            "Como el margen lo permite y el capital en juego es bajo, ofrecerlo como regalo o incentivo con compras mayores en vez de descontarlo en el catalogo.",
+          ],
+          exito: null,
+          siNoFunciona: null,
+        },
+      ],
     };
   }
+
+  // Arquetipo 7: todo en rango medio, sin senal fuerte.
   if (medioCapital && !altoMeses && !margenBajo) {
     return {
-      titulo: "Sin accion inmediata",
-      texto: "Los indicadores estan en rango medio, sin ninguna senal fuerte de riesgo. Conviene monitorear en el proximo corte mensual en vez de tomar una accion ahora.",
+      archetype: "sin_accion",
+      diagnostico: "Los indicadores estan en rango medio, sin ninguna senal fuerte de riesgo todavia.",
+      fases: [
+        {
+          nombre: "Sin accion inmediata",
+          duracion: "Revisar el proximo corte mensual",
+          acciones: ["Monitorear en el proximo listado en vez de tomar una accion ahora."],
+          exito: null,
+          siNoFunciona: null,
+        },
+      ],
     };
   }
+
   return {
-    titulo: "Revisar en el proximo corte",
-    texto: "No hay una combinacion clara de senales de riesgo todavia. Conviene volver a evaluar este producto en el proximo listado mensual para ver como evoluciona.",
+    archetype: "revisar_proximo_corte",
+    diagnostico: "No hay una combinacion clara de senales de riesgo todavia.",
+    fases: [
+      {
+        nombre: "Revisar en el proximo corte",
+        duracion: "Proximo listado mensual",
+        acciones: ["Volver a evaluar este producto el proximo mes para ver como evoluciona."],
+        exito: null,
+        siNoFunciona: null,
+      },
+    ],
   };
 }
 
@@ -1043,6 +1241,7 @@ function App() {
   const [previewVista, setPreviewVista] = useState("capital");
   const [theme, setTheme] = useState("light");
   const [descuentoSimulado, setDescuentoSimulado] = useState(30);
+  const [expandido, setExpandido] = useState({});
   const auth = DS.useSupabaseAuth(supabaseClient);
 
   useEffect(() => {
@@ -1197,6 +1396,46 @@ function App() {
     const copy = [...filtered].sort((a, b) => b.score - a.score);
     return copy.slice(0, topN);
   }, [filtered, topN]);
+
+  /* Producto de mayor rotacion por sucursal: candidato natural para armar
+     combos ("lleve X con Y") sin inventar nada, sale de los datos reales. */
+  const topSellerPorSucursal = useMemo(() => {
+    const map = {};
+    for (const r of enriched) {
+      if (!map[r.sucursal] || (r.ventaPromedio || 0) > map[r.sucursal].ventaPromedio) {
+        map[r.sucursal] = { codigo: r.codigo, descripcion: r.descripcion, ventaPromedio: r.ventaPromedio || 0 };
+      }
+    }
+    return map;
+  }, [enriched]);
+
+  /* Mejor sucursal (por venta promedio) para cada codigo: si el mismo
+     producto vende bien en otra sucursal, la mejor jugada puede ser
+     trasladar stock en vez de descontar. */
+  const mejorSucursalPorCodigo = useMemo(() => {
+    const map = {};
+    for (const r of enriched) {
+      if (!map[r.codigo] || (r.ventaPromedio || 0) > map[r.codigo].ventaPromedio) {
+        map[r.codigo] = { sucursal: r.sucursal, ventaPromedio: r.ventaPromedio || 0 };
+      }
+    }
+    return map;
+  }, [enriched]);
+
+  const estrategiaConPlan = useMemo(() => {
+    const ctx = { topSellerPorSucursal, mejorSucursalPorCodigo, moneda };
+    return estrategiaLista.map((r) => ({ r, est: estrategiaAvanzada(r, ctx) }));
+  }, [estrategiaLista, topSellerPorSucursal, mejorSucursalPorCodigo, moneda]);
+
+  const resumenEstrategico = useMemo(() => {
+    const map = {};
+    let capitalTotal = 0;
+    for (const { r, est } of estrategiaConPlan) {
+      map[est.archetype] = (map[est.archetype] || 0) + 1;
+      capitalTotal += r.capitalAtrapado;
+    }
+    return { map, capitalTotal };
+  }, [estrategiaConPlan]);
 
   const quiebreYaAgotado = useMemo(() =>
     filtered.filter((r) => r.stock === 0 && r.ventaPromedio > 0).sort((a, b) => b.ventaPromedio - a.ventaPromedio),
@@ -1516,27 +1755,83 @@ function App() {
           </p>
         </div>
       ) : tab === "estrategia" ? (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <p className="text-sm text-stone-500 dark:text-stone-400">
-            Sugerencias generadas por reglas segun capital atrapado, meses sin venta y margen de cada producto (filtro y Top actuales). No son ideas de mercadeo/publicidad, son acciones financieras: liquidar, promocionar, devolver a proveedor o monitorear.
+            Plan de accion por producto, como si un estratega de mercadeo y un CFO lo revisaran juntos: que intentar primero, con que numeros, y que hacer despues si no funciona. Basado en capital atrapado, meses sin venta y margen (filtro y Top actuales).
           </p>
-          {estrategiaLista.length === 0 && (
+
+          {estrategiaConPlan.length > 0 && (
+            <div className="border border-stone-200 dark:border-stone-800 rounded-lg p-3 space-y-2 bg-stone-50 dark:bg-stone-900/50">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <p className="text-xs font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wide">Resumen ejecutivo - {estrategiaConPlan.length} productos en esta vista</p>
+                <p className="text-sm font-medium text-stone-900 dark:text-stone-50">Capital total en juego: {money(resumenEstrategico.capitalTotal, moneda)}</p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(resumenEstrategico.map).map(([arch, count]) => (
+                  <span key={arch} className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${ARCHETYPE_INFO[arch].color}`}>
+                    {ARCHETYPE_INFO[arch].label}
+                    <span className="opacity-70">x{count}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {estrategiaConPlan.length === 0 && (
             <p className="text-sm text-stone-400 p-4">Sin datos para este filtro.</p>
           )}
-          {estrategiaLista.map((r, i) => {
-            const est = estrategiaFinanciera(r);
+
+          {estrategiaConPlan.map(({ r, est }, i) => {
             const grupo = grupoCalculado(r.score);
+            const key = `${r.codigo}-${r.sucursal}-${i}`;
+            const abierto = !!expandido[key];
             return (
-              <div key={`${r.codigo}-${i}`} className="border border-stone-200 dark:border-stone-800 rounded-lg p-3 space-y-1.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-medium text-stone-900 dark:text-stone-50">{r.codigo} - {r.descripcion}</p>
-                    <p className="text-xs text-stone-500 dark:text-stone-400">{r.sucursal} - Stock {r.stock} - Capital {money(r.capitalAtrapado, moneda)}</p>
+              <div key={key} className="border border-stone-200 dark:border-stone-800 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setExpandido((prev) => ({ ...prev, [key]: !prev[key] }))}
+                  className="w-full text-left p-3 space-y-1.5 hover:bg-stone-50 dark:hover:bg-stone-900/50"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-medium text-stone-900 dark:text-stone-50">{r.codigo} - {r.descripcion}</p>
+                      <p className="text-xs text-stone-500 dark:text-stone-400">{r.sucursal} - Stock {r.stock} - Capital {money(r.capitalAtrapado, moneda)}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${ARCHETYPE_INFO[est.archetype].color}`}>
+                        {ARCHETYPE_INFO[est.archetype].label}
+                      </span>
+                      <DS.GroupBadge grupo={grupo} />
+                      <span className="text-stone-400 text-xs">{abierto ? "▲" : "▼"}</span>
+                    </div>
                   </div>
-                  <DS.GroupBadge grupo={grupo} />
-                </div>
-                <p className="text-sm font-medium text-violet-700 dark:text-violet-400">{est.titulo}</p>
-                <p className="text-sm text-stone-600 dark:text-stone-300">{est.texto}</p>
+                  <p className="text-sm text-stone-600 dark:text-stone-300">{est.diagnostico}</p>
+                </button>
+
+                {abierto && (
+                  <div className="border-t border-stone-200 dark:border-stone-800 p-3 space-y-3 bg-stone-50/50 dark:bg-stone-900/30">
+                    {est.fases.map((fase, fi) => (
+                      <div key={fi} className="flex gap-2.5">
+                        <div className="flex flex-col items-center">
+                          <span className="w-5 h-5 rounded-full bg-violet-600 text-white text-xs flex items-center justify-center shrink-0 font-medium">{fi + 1}</span>
+                          {fi < est.fases.length - 1 && <span className="w-px flex-1 bg-stone-300 dark:bg-stone-700 mt-1"></span>}
+                        </div>
+                        <div className="pb-3 space-y-1 flex-1">
+                          <p className="text-sm font-medium text-stone-900 dark:text-stone-50">{fase.nombre}</p>
+                          <p className="text-xs text-stone-400">{fase.duracion}</p>
+                          <ul className="text-sm text-stone-600 dark:text-stone-300 list-disc pl-4 space-y-0.5">
+                            {fase.acciones.map((a, ai) => <li key={ai}>{a}</li>)}
+                          </ul>
+                          {fase.exito && (
+                            <p className="text-xs text-emerald-700 dark:text-emerald-400"><span className="font-medium">Exito si:</span> {fase.exito}</p>
+                          )}
+                          {fase.siNoFunciona && (
+                            <p className="text-xs text-amber-700 dark:text-amber-400"><span className="font-medium">Si no funciona:</span> {fase.siNoFunciona}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}
