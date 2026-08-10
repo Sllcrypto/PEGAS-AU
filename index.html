@@ -24,16 +24,406 @@
 <div id="root"></div>
 
 <script type="text/babel">
+/* ============================================================
+   SISTEMA DE DISEÑO COMPARTIDO — v1.0.0 (copia local, temporal)
+   ============================================================
+   Este bloque es identico al archivo /design-system/design-system.js
+   que se entrega aparte. Vive aqui inline SOLO mientras no exista
+   el repo de GitHub para el sistema compartido.
+
+   MIGRACION PENDIENTE: en cuanto crees el repo y le pongas un tag
+   (ej. v1.0.0), borra este bloque completo y reemplazalo por:
+
+   <script type="text/babel" src="https://cdn.jsdelivr.net/gh/TU_USUARIO/design-system@v1.0.0/design-system.js"><\/script>
+
+   Apunta SIEMPRE a un tag fijo, nunca a @main — un cambio futuro al
+   sistema no debe poder romper una app de cliente ya en produccion
+   sin que tu lo decidas explicitamente subiendo de version.
+
+   Misma migracion aplica para Control Empresarial y futuras apps:
+   todas cargan la MISMA url de tag para compartir el sistema.
+   ============================================================ */
+
+(function () {
+  const { useState, useEffect } = React;
+
+  /* ---------- ICONOS (SVGs vendorizados, sin dependencia externa) ---------- */
+  /* Trazos basados en Lucide (ISC License). Copiados como componentes React
+     livianos para evitar cargar la librería completa y evitar conflictos
+     de Lucide manipulando el DOM por fuera de React. */
+
+  function iconBase(paths, props) {
+    const { size = 18, strokeWidth = 2, className = "", ...rest } = props || {};
+    return (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width={size} height={size} viewBox="0 0 24 24"
+        fill="none" stroke="currentColor" strokeWidth={strokeWidth}
+        strokeLinecap="round" strokeLinejoin="round"
+        className={className} {...rest}
+      >
+        {paths}
+      </svg>
+    );
+  }
+
+  const Icons = {
+    TrendingDown: (p) => iconBase(<><polyline points="22 17 13.5 8.5 8.5 13.5 2 7" /><polyline points="16 17 22 17 22 11" /></>, p),
+    TrendingUp: (p) => iconBase(<><polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" /></>, p),
+    Ban: (p) => iconBase(<><circle cx="12" cy="12" r="10" /><line x1="4.9" y1="4.9" x2="19.1" y2="19.1" /></>, p),
+    Minus: (p) => iconBase(<line x1="5" y1="12" x2="19" y2="12" />, p),
+    Sun: (p) => iconBase(<><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></>, p),
+    Moon: (p) => iconBase(<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />, p),
+    Download: (p) => iconBase(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></>, p),
+    Mail: (p) => iconBase(<><rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" /></>, p),
+    X: (p) => iconBase(<><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>, p),
+    ChevronDown: (p) => iconBase(<polyline points="6 9 12 15 18 9" />, p),
+    Upload: (p) => iconBase(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></>, p),
+    Save: (p) => iconBase(<><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></>, p),
+    AlertTriangle: (p) => iconBase(<><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></>, p),
+    History: (p) => iconBase(<><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><polyline points="3 3 3 8 8 8" /><polyline points="12 7 12 12 16 14" /></>, p),
+    LogOut: (p) => iconBase(<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>, p),
+    Lock: (p) => iconBase(<><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>, p),
+    Search: (p) => iconBase(<><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></>, p),
+  };
+
+  /* ---------- TOKENS DE MARCA ---------- */
+  /* Cada app pasa su propio THEME { primary, secondary, accent, name, logo }.
+     Este helper traduce el tema a clases Tailwind consistentes en toda la
+     familia de apps. Los valores válidos de color son nombres de paleta
+     Tailwind (ej. "blue", "emerald", "violet", "rose", "amber", "cyan"). */
+  function themeClasses(theme) {
+    const p = theme?.primary || "blue";
+    const s = theme?.secondary || "emerald";
+    const a = theme?.accent || "violet";
+    return {
+      primary: p, secondary: s, accent: a,
+      primaryBtn: `bg-${p}-600 hover:bg-${p}-700 text-white`,
+      primaryBtnOutline: `border border-${p}-300 dark:border-${p}-800 text-${p}-700 dark:text-${p}-300`,
+      secondaryBtn: `bg-${s}-600 hover:bg-${s}-700 text-white`,
+      accentBtn: `bg-${a}-600 hover:bg-${a}-700 text-white`,
+    };
+  }
+
+  /* ---------- COLORES SEMÁNTICOS DE RIESGO (fijos, NO se tematizan) ---------- */
+  const RISK = {
+    A: "bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-300",
+    B: "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300",
+    C: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300",
+    score(score) {
+      if (score >= 0.66) return "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300";
+      if (score >= 0.33) return "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300";
+      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
+    },
+  };
+
+  /* ---------- TIPOGRAFÍA Y ESPACIADO (escala fija, igual en toda la familia) ---------- */
+  const TYPE = {
+    pageTitle: "text-2xl font-semibold tracking-tight",
+    pageSubtitle: "text-sm text-stone-500 dark:text-stone-400",
+    sectionTitle: "font-medium text-stone-900 dark:text-stone-100",
+    label: "text-xs text-stone-500 dark:text-stone-400",
+    statValue: "text-xl font-medium",
+    body: "text-sm text-stone-700 dark:text-stone-300",
+  };
+  const SPACING = {
+    page: "px-4 py-4 md:px-6 md:py-6 max-w-6xl mx-auto",
+    stackGap: "space-y-4",
+    cardPad: "p-3",
+    modalPad: "p-5",
+  };
+
+  /* ---------- COMPONENTES ---------- */
+
+  /* Mapa de hex reales (shade 600) para los nombres de paleta Tailwind
+     soportados como color de marca. Se usa solo para el degradado del
+     header, que necesita valores CSS reales (no puede depender de que
+     Tailwind genere una clase para eso). */
+  const HEX600 = {
+    slate: "#475569", gray: "#4b5563", zinc: "#52525b", neutral: "#525252", stone: "#57534e",
+    red: "#dc2626", orange: "#ea580c", amber: "#d97706", yellow: "#ca8a04", lime: "#65a30d",
+    green: "#16a34a", emerald: "#059669", teal: "#0d9488", cyan: "#0891b2", sky: "#0284c7",
+    blue: "#2563eb", indigo: "#4f46e5", violet: "#7c3aed", purple: "#9333ea",
+    fuchsia: "#c026d3", pink: "#db2777", rose: "#e11d48",
+  };
+
+  function AppHeader({ theme, tab, tabs, onTabChange, darkMode, onToggleDark, onLogout, userEmail }) {
+    const tc = themeClasses(theme);
+    const g1 = HEX600[tc.secondary] || "#059669";
+    const g2 = HEX600[tc.primary] || "#2563eb";
+    const g3 = HEX600[tc.accent] || "#7c3aed";
+    return (
+      <div className="mb-4">
+        <div className="h-1 w-full rounded-full mb-3" style={{
+          background: `linear-gradient(90deg, ${g1} 0%, ${g2} 50%, ${g3} 100%)`
+        }} />
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {theme?.logo && <img src={theme.logo} alt={theme.name} className="w-9 h-9 rounded-lg object-contain" />}
+            <div>
+              <h1 className={TYPE.pageTitle}>{theme?.appTitle || "App"}</h1>
+              <p className={TYPE.pageSubtitle}>{theme?.appSubtitle || ""}</p>
+            </div>
+          </div>
+          {onLogout && (
+            <button onClick={onLogout} title={userEmail ? `Salir (${userEmail})` : "Salir"}
+              className="shrink-0 flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 mt-1">
+              <Icons.LogOut size={14} />
+              <span className="hidden sm:inline">{userEmail || "Salir"}</span>
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto mt-3 pb-1">
+          {tabs.map((t) => (
+            <button key={t.id} onClick={() => onTabChange(t.id)}
+              className={`shrink-0 px-3 py-1.5 rounded-lg text-sm border ${tab === t.id
+                ? `bg-${tc.primary}-600 text-white border-${tc.primary}-600`
+                : "border-stone-300 dark:border-stone-700 text-stone-600 dark:text-stone-300"}`}>
+              {t.label}
+            </button>
+          ))}
+          <button onClick={onToggleDark}
+            className="shrink-0 ml-auto w-9 h-9 grid place-items-center rounded-lg border border-stone-300 dark:border-stone-700 text-stone-600 dark:text-stone-300">
+            {darkMode ? <Icons.Sun size={16} /> : <Icons.Moon size={16} />}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function StatCard({ label, value, tone = "primary", theme }) {
+    const tc = themeClasses(theme);
+    const colorMap = { primary: tc.primary, secondary: tc.secondary, accent: tc.accent, neutral: "stone" };
+    const c = colorMap[tone] || tc.primary;
+    return (
+      <div className={`bg-${c}-50 dark:bg-${c}-950/40 rounded-lg ${SPACING.cardPad} border-l-2 border-${c}-500`}>
+        <p className={`text-xs text-${c}-700 dark:text-${c}-400 mb-1`}>{label}</p>
+        <p className={`${TYPE.statValue} text-${c}-900 dark:text-${c}-200`}>{value}</p>
+      </div>
+    );
+  }
+
+  function Button({ children, onClick, variant = "primary", theme, className = "", ...rest }) {
+    const tc = themeClasses(theme);
+    const variants = {
+      primary: tc.primaryBtn,
+      secondary: tc.secondaryBtn,
+      accent: tc.accentBtn,
+      outline: `border border-stone-300 dark:border-stone-700 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800`,
+      ghost: "text-stone-400 hover:text-stone-600 dark:hover:text-stone-300",
+    };
+    return (
+      <button onClick={onClick} className={`px-3 py-2 rounded-lg text-sm ${variants[variant]} ${className}`} {...rest}>
+        {children}
+      </button>
+    );
+  }
+
+  function GroupBadge({ grupo }) {
+    return (
+      <span className={`inline-block w-6 h-6 leading-6 text-center rounded-full text-xs font-semibold ${RISK[grupo] || RISK.C}`}>
+        {grupo}
+      </span>
+    );
+  }
+
+  function ScoreBadge({ score }) {
+    return (
+      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${RISK.score(score)}`}>
+        {Math.round(score * 100)}
+      </span>
+    );
+  }
+
+  function TrendIcon({ tendencia, size = 14 }) {
+    const map = {
+      nunca_vendio: <Icons.Ban size={size} className="text-red-500 inline" />,
+      declive: <Icons.TrendingDown size={size} className="text-amber-500 inline" />,
+      creciendo: <Icons.TrendingUp size={size} className="text-emerald-500 inline" />,
+      estable: <Icons.Minus size={size} className="text-stone-400 inline" />,
+    };
+    return map[tendencia] || null;
+  }
+
+  function Modal({ children, maxWidth = "max-w-sm", bodyClassName = "space-y-4" }) {
+    return (
+      <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+        <div className={`bg-white dark:bg-stone-900 rounded-xl ${SPACING.modalPad} w-full ${maxWidth} ${bodyClassName}`}>
+          {children}
+        </div>
+      </div>
+    );
+  }
+
+  function Field({ label, children }) {
+    return (
+      <div>
+        <p className={`${TYPE.label} mb-1`}>{label}</p>
+        {children}
+      </div>
+    );
+  }
+
+  /* ---------- AUTENTICACION (Supabase Auth, email + password) ---------- */
+  /* Reutilizable en cualquier app de la familia que tenga un supabaseClient
+     ya creado. No decide el nivel de acceso (eso lo controla RLS en la base
+     de datos) — solo maneja la sesion y presenta el formulario. */
+
+  function useSupabaseAuth(supabaseClient) {
+    const [session, setSession] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [signingIn, setSigningIn] = useState(false);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+      if (!supabaseClient) { setLoading(false); return; }
+      supabaseClient.auth.getSession().then(({ data }) => {
+        setSession(data.session);
+        setLoading(false);
+      });
+      const { data: sub } = supabaseClient.auth.onAuthStateChange((_event, s) => {
+        setSession(s);
+      });
+      return () => sub.subscription.unsubscribe();
+    }, [supabaseClient]);
+
+    async function signIn(email, password) {
+      setSigningIn(true);
+      setError(null);
+      const { error: err } = await supabaseClient.auth.signInWithPassword({ email, password });
+      setSigningIn(false);
+      if (err) setError(err.message);
+    }
+
+    async function signOut() {
+      await supabaseClient.auth.signOut();
+    }
+
+    return { session, loading, signingIn, error, signIn, signOut };
+  }
+
+  function LoginScreen({ theme, onSubmit, loading, error }) {
+    const [email, setEmail] = useState("");
+    const [password, setPassword] = useState("");
+    const tc = themeClasses(theme);
+
+    function handleSubmit(e) {
+      e.preventDefault();
+      if (email && password) onSubmit(email, password);
+    }
+
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-stone-50 dark:bg-stone-950">
+        <form onSubmit={handleSubmit} className="w-full max-w-sm bg-white dark:bg-stone-900 rounded-xl p-6 space-y-4 border border-stone-200 dark:border-stone-800">
+          <div className="flex items-center gap-2 mb-2">
+            {theme?.logo
+              ? <img src={theme.logo} alt={theme.name} className="w-8 h-8 rounded-lg object-contain" />
+              : <div className={`w-8 h-8 rounded-lg grid place-items-center bg-${tc.primary}-600 text-white`}><Icons.Lock size={16} /></div>}
+            <div>
+              <h1 className="font-semibold text-stone-900 dark:text-stone-100">{theme?.appTitle || "App"}</h1>
+              <p className="text-xs text-stone-500 dark:text-stone-400">Acceso restringido</p>
+            </div>
+          </div>
+
+          <Field label="Correo">
+            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
+              placeholder="tucorreo@empresa.com" className={inputClass} autoComplete="username" />
+          </Field>
+          <Field label="Contraseña">
+            <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••" className={inputClass} autoComplete="current-password" />
+          </Field>
+
+          {error && (
+            <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+              {error}
+            </p>
+          )}
+
+          <button type="submit" disabled={loading}
+            className={`w-full px-3 py-2 rounded-lg text-sm ${tc.primaryBtn} disabled:opacity-50`}>
+            {loading ? "Entrando..." : "Entrar"}
+          </button>
+          <p className="text-xs text-stone-400 text-center">
+            Las cuentas se crean desde el panel de Supabase, no hay registro abierto.
+          </p>
+        </form>
+      </div>
+    );
+  }
+
+  function AccessDenied({ theme, userEmail, onLogout }) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-stone-50 dark:bg-stone-950">
+        <div className="w-full max-w-sm bg-white dark:bg-stone-900 rounded-xl p-6 space-y-3 border border-stone-200 dark:border-stone-800 text-center">
+          <div className="w-10 h-10 mx-auto rounded-full bg-red-100 dark:bg-red-950/50 grid place-items-center text-red-600 dark:text-red-400">
+            <Icons.Lock size={18} />
+          </div>
+          <h1 className="font-semibold text-stone-900 dark:text-stone-100">Sin acceso a {theme?.appTitle || "esta app"}</h1>
+          <p className="text-sm text-stone-500 dark:text-stone-400">
+            Tu cuenta {userEmail ? <span className="font-medium">({userEmail})</span> : ""} es valida pero no esta autorizada para entrar aqui. Pedile a quien administra el sistema que te agregue a la lista de acceso.
+          </p>
+          {onLogout && (
+            <button onClick={onLogout} className="text-xs text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 underline">
+              Salir
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const inputClass = "w-full text-sm border border-stone-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-100 rounded-lg px-2 py-1.5";
+  const selectClass = inputClass;
+
+  window.DS = {
+    Icons, themeClasses, RISK, TYPE, SPACING,
+    AppHeader, StatCard, Button, GroupBadge, ScoreBadge, TrendIcon, Modal, Field,
+    useSupabaseAuth, LoginScreen, AccessDenied,
+    inputClass, selectClass,
+  };
+})();
+
+</script>
+
+
+<script type="text/babel">
 const { useState, useMemo, useCallback, useEffect } = React;
 
 /* ====================== CONFIGURACION SUPABASE ======================
-   1. Crea un proyecto en supabase.com
-   2. Corre el SQL de mas abajo (ver comentario SQL_SETUP) en el SQL editor
-   3. Ve a Project Settings > API y copia la Project URL y la anon key (JWT, no la "publishable")
-   4. Pegalas aqui abajo antes de subir este archivo a GitHub Pages
+   DECISION TOMADA (importante para no repetir el error despues): este
+   proyecto usa el MISMO proyecto de Supabase que "Control de Vacaciones"
+   (por el limite de 2 proyectos gratis por cuenta). Para que eso no
+   signifique "cualquier empleado con cuenta de vacaciones puede ver el
+   analisis financiero de pegas", los datos de esta app viven en un
+   schema de Postgres separado ("pegas", no "public") con su propia
+   lista blanca de usuarios permitidos — un empleado de Vacaciones que
+   NO esta en esa lista, aunque inicie sesion, no puede leer ni escribir
+   nada del schema pegas. Las dos apps siguen siendo archivos HTML
+   totalmente independientes; solo comparten el backend.
+
+   PASOS (correr una sola vez, en el proyecto de Control de Vacaciones):
+
+   1. Corre el SQL de mas abajo (ver SQL_SETUP) en el SQL editor de ESE
+      proyecto (el de Vacaciones, no uno nuevo).
+   2. Expone el schema "pegas" a la API:
+      Project Settings > API > "Exposed schemas" > agrega "pegas" a la
+      lista (junto a "public" que ya deberia estar). Sin este paso el
+      cliente JS no puede llegar al schema aunque el SQL este correcto.
+   3. Cuentas de acceso (reusa las que ya existan en ese proyecto si
+      gerencia ya tiene login ahi, o crea nuevas):
+      Authentication > Users > "Add user" (email + password, "Auto
+      Confirm User" activado). Copia el UUID de cada usuario que SI debe
+      entrar a Pegas.
+   4. Agrega esos UUIDs a la lista blanca corriendo, por cada persona:
+      insert into pegas.allowed_users (user_id) values ('UUID-AQUI');
+   5. Ve a Project Settings > API y copia la Project URL y la anon key
+      (JWT, no la "publishable") — son las MISMAS que usa Control de
+      Vacaciones, no hay credenciales nuevas que generar.
+   6. Pegalas aqui abajo antes de subir este archivo a GitHub Pages.
    ====================================================================== */
-const SUPABASE_URL = "TU_SUPABASE_URL_AQUI";
-const SUPABASE_ANON_KEY = "TU_SUPABASE_ANON_KEY_AQUI";
+const SUPABASE_URL = "https://nmxcvxmieeyhecuscacm.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_NI-GASqNutcHmMmede4IZw_LnXQBnlQ";
 
 let supabaseClient = null;
 try {
@@ -44,34 +434,97 @@ try {
   console.warn("Supabase no configurado todavia:", e);
 }
 
-/* SQL_SETUP (correr una sola vez en Supabase SQL editor):
+/* SQL_SETUP (correr una sola vez, en el SQL editor del proyecto de Control de Vacaciones):
 
-create table pegas_uploads (
+-- Schema separado: nada de esto toca las tablas que ya usa Vacaciones.
+create schema if not exists pegas;
+
+-- Lista blanca: quien puede entrar a Pegas, sin importar si tiene
+-- cuenta valida en el proyecto (esa cuenta sola no alcanza).
+create table pegas.allowed_users (
+  user_id uuid primary key references auth.users(id) on delete cascade
+);
+-- No se le da ninguna politica RLS a esta tabla a proposito: el editor
+-- SQL del panel de Supabase corre como admin y la puede leer/editar
+-- igual, y del lado del cliente (API) queda con acceso denegado por
+-- default al no tener ninguna policy — nadie la consulta desde el navegador.
+alter table pegas.allowed_users enable row level security;
+-- Excepcion puntual: cada usuario puede consultar UNICAMENTE su propia
+-- fila (para que la app pueda verificar "¿estoy en la lista?" sin poder
+-- ver quien mas esta en ella).
+create policy "solo mi propia fila" on pegas.allowed_users
+  for select
+  to authenticated
+  using (auth.uid() = user_id);
+
+create table pegas.uploads (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz default now(),
   nombre_archivo text,
   filas int,
   data jsonb
 );
-alter table pegas_uploads enable row level security;
-create policy "acceso publico" on pegas_uploads for all using (true) with check (true);
-alter publication supabase_realtime add table pegas_uploads;
+alter table pegas.uploads enable row level security;
+
+create policy "solo lista blanca" on pegas.uploads
+  for all
+  to authenticated
+  using (auth.uid() in (select user_id from pegas.allowed_users))
+  with check (auth.uid() in (select user_id from pegas.allowed_users));
+
+alter publication supabase_realtime add table pegas.uploads;
+
+-- Sin este grant, la API (PostgREST) no tiene permiso de tocar nada
+-- fuera de "public" aunque el schema exista y este expuesto en el panel.
+grant usage on schema pegas to authenticated, anon;
+grant select on pegas.allowed_users to authenticated;
+grant select, insert, update, delete on pegas.uploads to authenticated;
+
+-- Por cada persona que debe entrar a Pegas (repetir por usuario):
+-- insert into pegas.allowed_users (user_id) values ('UUID-DEL-USUARIO');
 
 */
+
+/* ====================== IDENTIDAD DE CLIENTE ======================
+   Lo UNICO que cambia entre apps de la misma familia. Todo lo demas
+   (estructura, tipografia, espaciado, navegacion, componentes) viene
+   del sistema de diseño compartido de arriba. Nombres de color validos:
+   cualquier paleta de Tailwind (blue, emerald, violet, rose, amber, etc). */
+const THEME = {
+  name: "Analisis de pegas",
+  appTitle: "Analisis de pegas",
+  appSubtitle: "Productos de baja rotacion por sucursal",
+  primary: "blue",
+  secondary: "emerald",
+  accent: "violet",
+  logo: null, // URL de logo opcional, ej: "https://.../logo.png"
+};
+
 
 /* ====================== LOGICA DE DATOS ====================== */
 
 const SUCURSALES_ESPERADAS = ["CENTRAL", "ESQUINA", "HATILLO"];
 
+/* El sistema real exporta headers en camelCase pegado (ej. "sCodigoProducto",
+   "nPrecioSinIva") — nada de espacios. OJO: la columna "Descripcion" (A) NO es
+   la descripcion del producto, es la etiqueta de bodega/sucursal ("Almacen
+   Local Hatillo") — la descripcion real esta en "sDescripcionProducto" (C).
+   Por eso los alias mas especificos van PRIMERO en cada lista: el primero
+   que matchee gana, y así nunca se confunde la columna A con la C. */
 const COLUMN_MAP = {
-  codigo: ["codigo", "código", "cod"],
-  descripcion: ["nombre del producto", "descripcion", "descripción"],
-  costo: ["costo mercado colones", "costo de ultima compra", "costo de última compra", "costo"],
-  fechaCompra: ["fecha de la ultima compra", "fecha de ultima compra", "fecha de última compra"],
-  cantidadComprada: ["cantidad de ultima compra", "cantidades compradas en total"],
-  stock: ["stock", "saldo", "existencias"],
-  precioSinImp: ["precio sin"],
-  precioConImp: ["precio con"],
+  codigo: ["scodigoproducto", "codigo", "código", "cod"],
+  descripcion: ["sdescripcionproducto", "nombre del producto", "descripcion", "descripción"],
+  costo: ["ncostomercado", "costomercado", "costo mercado colones", "costo de ultima compra", "costo de última compra", "costo"],
+  fechaCompra: ["dfechaultimacompra", "fechaultimacompra", "fecha de la ultima compra", "fecha de ultima compra", "fecha de última compra"],
+  cantidadComprada: ["ncantidadultimacompra", "cantidadultimacompra", "cantidad de ultima compra", "cantidades compradas en total"],
+  stock: ["nsaldouds", "stock", "saldo", "existencias"],
+  precioSinImp: ["npreciosiniva", "preciosin", "precio sin"],
+  precioConImp: ["nprecioconiva", "preciocon", "precio con"],
+  /* Columnas del formato nuevo que ya vienen calculadas — se prefieren sobre
+     calcularlas nosotros mismos cuando estan presentes. */
+  ventaTotalDirecta: ["nunidadesnetas", "unidadesnetas"],
+  ventaPromedioDirecta: ["npromediounidadesnetas", "promediounidadesnetas", "promedio"],
+  margenDirecto: ["nrentabilidad", "rentabilidad"],
 };
 
 function normalizeHeader(h) {
@@ -92,9 +545,15 @@ function buildColumnIndex(headers) {
   return idx;
 }
 
-/* Detecta columnas de mes tipo "Jul-25", "Ago-25", etc. */
+/* Detecta columnas de mes en dos formatos posibles:
+   - viejo: "Jul-25", "Ago-25"
+   - nuevo: "nEnero", "nFebrero"... "nDiciembre" (el que exporta el sistema real) */
+const MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 function isMonthHeader(h) {
-  return /^[a-zA-Z]{3}-\d{2}$/.test(String(h || "").trim());
+  const s = String(h || "").trim().toLowerCase();
+  if (/^[a-zA-Z]{3}-\d{2}$/.test(s)) return true;
+  const sinPrefijoN = s.startsWith("n") ? s.slice(1) : s;
+  return MESES_ES.includes(sinPrefijoN);
 }
 
 function toNumber(value) {
@@ -107,10 +566,14 @@ function toNumber(value) {
   return 0;
 }
 
-/* Lee una hoja de sucursal completa: encabezados en la fila 1, fila 2 es subtitulo
-   ("Unidades Netas Vendidas"), fila 3 es el TOTAL general de la hoja (se salta), y los
-   datos de producto empiezan en la fila 4. El margen no viene en el Excel: se calcula
-   desde costo y precio sin impuesto. */
+/* Lee una hoja de sucursal completa. Soporta dos formatos de Excel:
+   - Formato nuevo (el real, que exporta el sistema): headers camelCase pegado,
+     sin fila de subtitulo ni fila TOTAL de resumen — los datos empiezan en la
+     fila 2. Trae venta total, promedio y margen ya calculados en sus propias
+     columnas, ademas de cantidad y fecha de la ultima compra con datos reales.
+   - Formato viejo (mockup original): fila 1 headers, fila 2 subtitulo, fila 3
+     TOTAL de resumen, datos desde fila 4, sin cantidad/fecha de compra.
+   Se detecta solo, columna por columna, sin necesidad de saber cual formato es. */
 function parseSucursalSheet(rows, sucursal, marginLookup) {
   if (!rows.length) return [];
   const headers = rows[0];
@@ -120,20 +583,32 @@ function parseSucursalSheet(rows, sucursal, marginLookup) {
   const totalIdx = headers.findIndex((h) => normalizeHeader(h) === "total");
   const promedioIdx = headers.findIndex((h) => normalizeHeader(h) === "promedio");
 
+  function valOrUndefined(rowArr, i) {
+    if (i === -1) return undefined;
+    const v = rowArr[i];
+    return v === undefined || v === null || v === "" ? undefined : v;
+  }
+
   const out = [];
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
     if (!row) continue;
     const codigoRaw = idx.codigo !== -1 ? row[idx.codigo] : undefined;
     const codigo = codigoRaw === undefined || codigoRaw === null ? "" : String(codigoRaw).trim();
-    if (!codigo || codigo.toUpperCase() === "TOTAL") continue;
+    // fila basura que a veces manda el sistema (codigo "*" con datos sin sentido) y
+    // la fila de resumen "TOTAL" del formato viejo — ambas se descartan.
+    if (!codigo || codigo === "*" || codigo.toUpperCase() === "TOTAL") continue;
 
     const costo = toNumber(idx.costo !== -1 ? row[idx.costo] : 0);
     const precioSinImp = toNumber(idx.precioSinImp !== -1 ? row[idx.precioSinImp] : 0);
     const precioConImp = toNumber(idx.precioConImp !== -1 ? row[idx.precioConImp] : 0);
+
     let margen;
     let margenEstimado = false;
-    if (costo > 0 && precioSinImp > 0) {
+    const margenDirecto = valOrUndefined(row, idx.margenDirecto);
+    if (margenDirecto !== undefined) {
+      margen = toNumber(margenDirecto);
+    } else if (costo > 0 && precioSinImp > 0) {
       margen = (precioSinImp / costo - 1) * 100;
     } else if (marginLookup && marginLookup[codigo] !== undefined) {
       margen = marginLookup[codigo];
@@ -143,8 +618,12 @@ function parseSucursalSheet(rows, sucursal, marginLookup) {
     }
 
     const ventasMensuales = monthCols.map((ci) => toNumber(row[ci]));
-    const ventaTotal = totalIdx !== -1 ? toNumber(row[totalIdx]) : ventasMensuales.reduce((a, b) => a + b, 0);
-    const ventaPromedio = promedioIdx !== -1 ? toNumber(row[promedioIdx]) : (ventasMensuales.length ? ventaTotal / ventasMensuales.length : 0);
+
+    const ventaTotalDirecta = valOrUndefined(row, idx.ventaTotalDirecta) ?? (totalIdx !== -1 ? valOrUndefined(row, totalIdx) : undefined);
+    const ventaTotal = ventaTotalDirecta !== undefined ? toNumber(ventaTotalDirecta) : ventasMensuales.reduce((a, b) => a + b, 0);
+
+    const ventaPromedioDirecta = valOrUndefined(row, idx.ventaPromedioDirecta) ?? (promedioIdx !== -1 ? valOrUndefined(row, promedioIdx) : undefined);
+    const ventaPromedio = ventaPromedioDirecta !== undefined ? toNumber(ventaPromedioDirecta) : (ventasMensuales.length ? ventaTotal / ventasMensuales.length : 0);
 
     let mesesSinVenta = 0;
     for (let m = ventasMensuales.length - 1; m >= 0; m--) {
@@ -155,7 +634,7 @@ function parseSucursalSheet(rows, sucursal, marginLookup) {
     out.push({
       sucursal,
       codigo,
-      descripcion: String(idx.descripcion !== -1 ? row[idx.descripcion] ?? "" : ""),
+      descripcion: String(idx.descripcion !== -1 ? row[idx.descripcion] ?? "" : "").trim(),
       costo,
       stock: toNumber(idx.stock !== -1 ? row[idx.stock] : 0),
       precioSinImp,
@@ -166,6 +645,12 @@ function parseSucursalSheet(rows, sucursal, marginLookup) {
       ventaPromedio: Math.round(ventaPromedio * 100) / 100,
       mesesSinVenta,
       mesesMonitoreados: monthCols.length || 13,
+      ventasMensuales,
+      // Nuevos, disponibles ahora que el Excel real los trae con datos reales
+      // (antes venian vacios). No se usan todavia en ninguna vista — quedan
+      // capturados para cuando quieras el reporte de eficiencia de compra.
+      cantidadUltimaCompra: idx.cantidadComprada !== -1 ? toNumber(row[idx.cantidadComprada]) : 0,
+      fechaUltimaCompra: valOrUndefined(row, idx.fechaCompra) ?? null,
     });
   }
   return out;
@@ -188,12 +673,31 @@ function parseMarginLookup(rows) {
   return map;
 }
 
+function clasificarTendencia(r) {
+  if (!r.ventaTotal || r.ventaTotal <= 0) return "nunca_vendio";
+  const n = r.ventasMensuales ? r.ventasMensuales.length : 0;
+  if (n < 6) return "estable"; // no hay suficiente historial para hablar de tendencia
+  const ultimos = r.ventasMensuales.slice(-3);
+  const previos = r.ventasMensuales.slice(0, n - 3);
+  const promUltimos = ultimos.reduce((a, b) => a + b, 0) / ultimos.length;
+  const promPrevios = previos.length ? previos.reduce((a, b) => a + b, 0) / previos.length : 0;
+  if (promPrevios > 0 && promUltimos < promPrevios * 0.4) return "declive";
+  if (promPrevios > 0 && promUltimos > promPrevios * 1.3) return "creciendo";
+  return "estable";
+}
+
 function enrich(rows) {
-  return rows.map((r) => ({
-    ...r,
-    capitalAtrapado: r.costo * r.stock,
-    mesesInventario: r.ventaPromedio > 0 ? r.stock / r.ventaPromedio : null,
-  }));
+  return rows.map((r) => {
+    const utilidadUnitaria = r.precioSinImp - r.costo;
+    return {
+      ...r,
+      capitalAtrapado: r.costo * r.stock,
+      mesesInventario: r.ventaPromedio > 0 ? r.stock / r.ventaPromedio : null,
+      utilidadUnitaria,
+      utilidadTotal: utilidadUnitaria * (r.ventaTotal || 0),
+      tendencia: clasificarTendencia(r),
+    };
+  });
 }
 
 function rankPercentile(values, value) {
@@ -239,10 +743,111 @@ function money(n, symbol) {
   return symbol ? `${symbol} ${formatted}` : formatted;
 }
 
-function scoreBadgeClasses(score) {
-  if (score >= 0.66) return "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300";
-  if (score >= 0.33) return "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
-  return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
+/* ---------- Busqueda tolerante a errores (codigo y descripcion) ----------
+   Quita tildes/mayusculas, y si una palabra de la busqueda no aparece tal
+   cual, prueba con distancia de edicion (Levenshtein) contra las palabras
+   del texto — asi "cament" encuentra "cemento" y "esmeril" encuentra
+   "esmeriladora" aunque el usuario no escriba la palabra completa o se
+   equivoque una o dos letras. */
+function normalizarTexto(s) {
+  return String(s || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().trim();
+}
+
+function distanciaEdicion(a, b) {
+  if (a === b) return 0;
+  const la = a.length, lb = b.length;
+  if (la === 0) return lb;
+  if (lb === 0) return la;
+  let prev = new Array(lb + 1);
+  let curr = new Array(lb + 1);
+  for (let j = 0; j <= lb; j++) prev[j] = j;
+  for (let i = 1; i <= la; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= lb; j++) {
+      const costo = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + costo);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[lb];
+}
+
+function tokenCoincide(token, palabras, maxTolerancia) {
+  for (const palabra of palabras) {
+    if (palabra.includes(token) || token.includes(palabra)) return true;
+    // tolerancia proporcional al largo: 1 error en palabras cortas, 2 en largas,
+    // pero nunca mas que maxTolerancia (los codigos numericos usan un limite
+    // mas estricto — un codigo con 2 digitos distintos ya es OTRO producto,
+    // no un error de tipeo).
+    let tolerancia = token.length <= 4 ? 1 : token.length <= 8 ? 2 : 3;
+    if (maxTolerancia !== undefined) tolerancia = Math.min(tolerancia, maxTolerancia);
+    if (Math.abs(palabra.length - token.length) <= tolerancia && distanciaEdicion(token, palabra) <= tolerancia) return true;
+  }
+  return false;
+}
+
+/* query puede traer varias palabras separadas por espacio — todas deben
+   encontrar algo asociado para que el texto cuente como resultado. */
+function coincideCampo(query, texto, maxTolerancia) {
+  const q = normalizarTexto(query);
+  if (!q) return true;
+  const tokens = q.split(/\s+/).filter(Boolean);
+  const t = normalizarTexto(texto);
+  if (t.includes(q)) return true;
+  const palabras = t.split(/\s+/).filter(Boolean);
+  return tokens.every((tok) => tokenCoincide(tok, palabras, maxTolerancia));
+}
+
+/* Que tan cerca esta el texto de la busqueda, para ordenar los resultados
+   con lo mas exacto primero: 0 = coincide exacto, 1 = empieza igual,
+   2 = lo contiene, 3 = solo coincide "parecido" (tolerancia de tipeo). */
+function rangoCoincidencia(query, texto) {
+  const q = normalizarTexto(query);
+  if (!q) return 0;
+  const t = normalizarTexto(texto);
+  if (t === q) return 0;
+  if (t.startsWith(q)) return 1;
+  if (t.includes(q)) return 2;
+  return 3;
+}
+
+/* Buscador numerico para margen y utilidad (no son texto, son valores).
+   Acepta tres formas de escribir:
+   - un numero solo (ej "20")            -> los valores CERCANOS a 20
+   - un rango (ej "10-30")                -> los que caen entre 10 y 30
+   - un comparador (ej ">20", "<=15")     -> mayor/menor que ese valor
+   Devuelve {ok, distancia} — distancia se usa despues para ordenar de mas
+   cercano a menos cercano cuando la busqueda es por numero simple. */
+function coincideNumero(query, valor) {
+  const q = String(query || "").trim();
+  if (!q) return { ok: true, distancia: 0 };
+  if (valor === undefined || valor === null || Number.isNaN(valor)) return { ok: false, distancia: Infinity };
+
+  const rango = q.match(/^(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)$/);
+  if (rango) {
+    const a = parseFloat(rango[1]), b = parseFloat(rango[2]);
+    const min = Math.min(a, b), max = Math.max(a, b);
+    return { ok: valor >= min && valor <= max, distancia: 0 };
+  }
+
+  const comp = q.match(/^(>=|<=|>|<)\s*(-?\d+(?:\.\d+)?)$/);
+  if (comp) {
+    const n = parseFloat(comp[2]);
+    const op = comp[1];
+    const ok = op === ">" ? valor > n : op === "<" ? valor < n : op === ">=" ? valor >= n : valor <= n;
+    return { ok, distancia: Math.abs(valor - n) };
+  }
+
+  const n = parseFloat(q);
+  if (!Number.isNaN(n)) {
+    const tolerancia = Math.max(2, Math.abs(n) * 0.15); // +/-15%, minimo 2 unidades
+    const distancia = Math.abs(valor - n);
+    return { ok: distancia <= tolerancia, distancia };
+  }
+
+  return { ok: false, distancia: Infinity };
 }
 
 /* Clasificacion calculada por la app (no viene del Excel): Grupo A = mayor riesgo/prioridad,
@@ -251,12 +856,6 @@ function grupoCalculado(score) {
   if (score >= 0.66) return "A";
   if (score >= 0.33) return "B";
   return "C";
-}
-
-function grupoBadgeClasses(grupo) {
-  if (grupo === "A") return "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300";
-  if (grupo === "B") return "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
-  return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
 }
 
 /* Motor de estrategia financiera por reglas (sin IA externa). Usa los percentiles ya calculados
@@ -335,7 +934,7 @@ function detectCurrencySymbol(rowsFormatted, idx) {
 }
 
 function sampleData() {
-  const sucursales = ["Central", "Esquina", "Hatillo"];
+  const sucursales = ["CENTRAL", "ESQUINA", "HATILLO"];
   const nombres = [
     "Perfume Aurea 100ml", "Perfume Nocturne 50ml", "Tenis runner blanco", "Tenis urban negro",
     "Perfume Velvet Rose", "Sandalia clasica", "Perfume Oud Intense", "Tenis skate gris",
@@ -371,6 +970,7 @@ function sampleData() {
         sucursal: suc, codigo: `SKU-${1000 + n}`, descripcion: nombre, costo, stock,
         precioSinImp, precioConImp, margen: Math.round(margenPct * 10) / 10, margenEstimado: false,
         ventaTotal, ventaPromedio: Math.round(ventaPromedio * 100) / 100, mesesSinVenta, mesesMonitoreados,
+        ventasMensuales,
       });
     }
   }
@@ -384,7 +984,7 @@ function exportExcel(rows, view, moneda) {
   const cols = rows.map((r) => ({
     Codigo: r.codigo, Descripcion: r.descripcion, Sucursal: r.sucursal, Grupo: grupoCalculado(r.score),
     Stock: r.stock, [etiquetaCapital]: Math.round(r.capitalAtrapado),
-    "Meses sin venta": r.mesesSinVenta ?? "", "Margen %": r.margen,
+    "Meses sin venta": r.mesesSinVenta ?? "", "Promedio venta mensual": r.ventaPromedio ?? "", "Margen %": r.margen,
     ...(view !== "capital" ? { Score: Math.round(r.score * 100) } : {}),
   }));
   const ws = XLSX.utils.json_to_sheet(cols);
@@ -399,11 +999,11 @@ function buildPdfDoc(rows, view, titulo, moneda) {
   doc.text(titulo, 14, 15);
   doc.setFontSize(9);
   doc.text(`Generado ${new Date().toLocaleDateString("es-CR")}`, 14, 21);
-  const head = [["#", "Codigo", "Descripcion", "Sucursal", "Grupo", "Stock", "Capital atrapado", "Meses sin venta", "Margen"]];
+  const head = [["#", "Codigo", "Descripcion", "Sucursal", "Grupo", "Stock", "Capital atrapado", "Meses sin venta", "Prom. venta mensual", "Margen"]];
   if (view !== "capital") head[0].push("Score");
   const body = rows.map((r, i) => {
     const row = [i + 1, r.codigo, r.descripcion, r.sucursal, grupoCalculado(r.score), r.stock,
-      money(r.capitalAtrapado, moneda), r.mesesSinVenta ?? "-", `${r.margen}%`];
+      money(r.capitalAtrapado, moneda), r.mesesSinVenta ?? "-", r.ventaPromedio ?? "-", `${r.margen}%`];
     if (view !== "capital") row.push(Math.round(r.score * 100));
     return row;
   });
@@ -424,6 +1024,10 @@ function App() {
   const [fileName, setFileName] = useState("");
   const [view, setView] = useState("capital");
   const [sucursalFiltro, setSucursalFiltro] = useState("Todas");
+  const [busquedaCodigo, setBusquedaCodigo] = useState("");
+  const [busquedaDescripcion, setBusquedaDescripcion] = useState("");
+  const [busquedaMargen, setBusquedaMargen] = useState("");
+  const [busquedaMesesSinVenta, setBusquedaMesesSinVenta] = useState("");
   const [topN, setTopN] = useState(20);
   const [error, setError] = useState("");
   const [tab, setTab] = useState("analisis");
@@ -437,8 +1041,9 @@ function App() {
   const [previewMode, setPreviewMode] = useState(false);
   const [previewFilas, setPreviewFilas] = useState([]);
   const [previewVista, setPreviewVista] = useState("capital");
-  const [previewPdfUrl, setPreviewPdfUrl] = useState(null);
   const [theme, setTheme] = useState("light");
+  const [descuentoSimulado, setDescuentoSimulado] = useState(30);
+  const auth = DS.useSupabaseAuth(supabaseClient);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -449,7 +1054,8 @@ function App() {
   const cargarHistorial = useCallback(async () => {
     if (!supabaseClient) return;
     const { data, error } = await supabaseClient
-      .from("pegas_uploads")
+      .schema("pegas")
+      .from("uploads")
       .select("id, created_at, nombre_archivo, filas")
       .order("created_at", { ascending: false })
       .limit(30);
@@ -491,7 +1097,7 @@ function App() {
         for (const nombreHoja of hojasSucursal) {
           const sheet = wb.Sheets[nombreHoja];
           const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
-          const sucursalLabel = nombreHoja.trim();
+          const sucursalLabel = nombreHoja.trim().toUpperCase();
           const parsedHoja = parseSucursalSheet(rows, sucursalLabel, marginLookup);
           parsedTotal = parsedTotal.concat(parsedHoja);
 
@@ -525,7 +1131,7 @@ function App() {
       return;
     }
     setGuardando(true);
-    const { error } = await supabaseClient.from("pegas_uploads").insert({
+    const { error } = await supabaseClient.schema("pegas").from("uploads").insert({
       nombre_archivo: fileName || "datos de ejemplo",
       filas: parsedRaw.length,
       data: parsedRaw,
@@ -536,7 +1142,7 @@ function App() {
 
   const cargarDesdeHistorial = useCallback(async (id) => {
     if (!supabaseClient) return;
-    const { data, error } = await supabaseClient.from("pegas_uploads").select("data, nombre_archivo").eq("id", id).single();
+    const { data, error } = await supabaseClient.schema("pegas").from("uploads").select("data, nombre_archivo").eq("id", id).single();
     if (!error && data) {
       setParsedRaw(data.data);
       setFileName(data.nombre_archivo);
@@ -553,20 +1159,92 @@ function App() {
   }, [enriched]);
 
   const filtered = useMemo(() => enriched.filter((r) =>
-    (sucursalFiltro === "Todas" || r.sucursal === sucursalFiltro)
-  ), [enriched, sucursalFiltro]);
+    (sucursalFiltro === "Todas" || r.sucursal === sucursalFiltro) &&
+    coincideCampo(busquedaCodigo, r.codigo, 1) &&
+    coincideCampo(busquedaDescripcion, r.descripcion) &&
+    coincideNumero(busquedaMargen, r.margen).ok &&
+    coincideNumero(busquedaMesesSinVenta, r.mesesSinVenta).ok
+  ), [enriched, sucursalFiltro, busquedaCodigo, busquedaDescripcion, busquedaMargen, busquedaMesesSinVenta]);
+
+  const buscando = !!(busquedaCodigo.trim() || busquedaDescripcion.trim() || busquedaMargen.trim() || busquedaMesesSinVenta.trim());
 
   const sorted = useMemo(() => {
     const copy = [...filtered];
-    if (view === "capital") copy.sort((a, b) => b.capitalAtrapado - a.capitalAtrapado);
+    if (buscando) {
+      // Lo mas cercano a lo que se escribio va primero (exacto, luego "empieza
+      // igual", luego "lo contiene", y hasta el final lo que solo matchea por
+      // tolerancia de tipeo/cercania numerica). Alfanumerico real solo como
+      // desempate dentro del mismo nivel de cercania.
+      const campo = (busquedaDescripcion.trim() && !busquedaCodigo.trim()) ? "descripcion" : "codigo";
+      copy.sort((a, b) => {
+        const ra = rangoCoincidencia(busquedaCodigo, a.codigo) + rangoCoincidencia(busquedaDescripcion, a.descripcion);
+        const rb = rangoCoincidencia(busquedaCodigo, b.codigo) + rangoCoincidencia(busquedaDescripcion, b.descripcion);
+        if (ra !== rb) return ra - rb;
+        const da = coincideNumero(busquedaMargen, a.margen).distancia + coincideNumero(busquedaMesesSinVenta, a.mesesSinVenta).distancia;
+        const db = coincideNumero(busquedaMargen, b.margen).distancia + coincideNumero(busquedaMesesSinVenta, b.mesesSinVenta).distancia;
+        if (da !== db) return da - db;
+        return String(a[campo]).localeCompare(String(b[campo]), "es", { numeric: true, sensitivity: "base" });
+      });
+    } else if (view === "capital") copy.sort((a, b) => b.capitalAtrapado - a.capitalAtrapado);
+    else if (view === "utilidad") copy.sort((a, b) => b.utilidadTotal - a.utilidadTotal);
     else copy.sort((a, b) => b.score - a.score);
-    return copy.slice(0, topN);
-  }, [filtered, view, topN]);
+    // Si hay busqueda activa, el usuario quiere ver SUS resultados, no solo
+    // el top N por score/capital — se muestran todos (con un techo razonable).
+    return buscando ? copy.slice(0, 200) : copy.slice(0, topN);
+  }, [filtered, view, topN, buscando, busquedaCodigo, busquedaDescripcion, busquedaMargen, busquedaMesesSinVenta]);
 
   const estrategiaLista = useMemo(() => {
     const copy = [...filtered].sort((a, b) => b.score - a.score);
     return copy.slice(0, topN);
   }, [filtered, topN]);
+
+  const quiebreYaAgotado = useMemo(() =>
+    filtered.filter((r) => r.stock === 0 && r.ventaPromedio > 0).sort((a, b) => b.ventaPromedio - a.ventaPromedio),
+  [filtered]);
+
+  const quiebrePorAgotarse = useMemo(() =>
+    filtered.filter((r) => r.stock > 0 && r.mesesInventario !== null && r.mesesInventario < 2)
+      .sort((a, b) => a.mesesInventario - b.mesesInventario),
+  [filtered]);
+
+  const compararSucursales = useMemo(() => {
+    const map = {};
+    for (const r of enriched) {
+      if (!map[r.codigo]) map[r.codigo] = { codigo: r.codigo, descripcion: r.descripcion, porSucursal: {} };
+      map[r.codigo].porSucursal[r.sucursal] = r;
+    }
+    const multi = Object.values(map).filter((g) => Object.keys(g.porSucursal).length >= 2);
+    return multi.map((g) => {
+      const ventas = Object.values(g.porSucursal).map((r) => r.ventaPromedio);
+      return { ...g, gap: Math.max(...ventas) - Math.min(...ventas) };
+    }).sort((a, b) => b.gap - a.gap).slice(0, topN);
+  }, [enriched, topN]);
+
+  const resumenPorSucursal = useMemo(() => {
+    const map = {};
+    for (const r of enriched) {
+      if (!map[r.sucursal]) map[r.sucursal] = { sucursal: r.sucursal, capitalPegas: 0, utilidadTotal: 0, countA: 0, countB: 0, countC: 0 };
+      const g = grupoCalculado(r.score);
+      map[r.sucursal].utilidadTotal += r.utilidadTotal;
+      if (g === "A") { map[r.sucursal].countA++; map[r.sucursal].capitalPegas += r.capitalAtrapado; }
+      else if (g === "B") map[r.sucursal].countB++;
+      else map[r.sucursal].countC++;
+    }
+    return Object.values(map);
+  }, [enriched]);
+
+  const totalesGlobales = useMemo(() => resumenPorSucursal.reduce((acc, s) => ({
+    capitalPegas: acc.capitalPegas + s.capitalPegas,
+    utilidadTotal: acc.utilidadTotal + s.utilidadTotal,
+    countA: acc.countA + s.countA,
+  }), { capitalPegas: 0, utilidadTotal: 0, countA: 0 }), [resumenPorSucursal]);
+
+  const grupoAFiltrado = useMemo(() => filtered.filter((r) => grupoCalculado(r.score) === "A"), [filtered]);
+  const simulacion = useMemo(() => ({
+    count: grupoAFiltrado.length,
+    capitalLiberado: grupoAFiltrado.reduce((s, r) => s + r.capitalAtrapado, 0),
+    ingresoEstimado: grupoAFiltrado.reduce((s, r) => s + r.stock * r.precioSinImp * (1 - descuentoSimulado / 100), 0),
+  }), [grupoAFiltrado, descuentoSimulado]);
 
   const totals = useMemo(() => ({
     capitalTotal: filtered.reduce((s, r) => s + r.capitalAtrapado, 0),
@@ -589,13 +1267,6 @@ function App() {
     const { filas, usarVista } = calcularFilasReporte();
     setPreviewFilas(filas);
     setPreviewVista(usarVista);
-    if (reportFormato === "pdf") {
-      const titulo = usarVista === "capital" ? "Reporte - Mayor capital atrapado" : "Reporte - Candidatos reales a pega";
-      const doc = buildPdfDoc(filas, usarVista, titulo, moneda);
-      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-      const url = doc.output("bloburl");
-      setPreviewPdfUrl(url);
-    }
     setPreviewMode(true);
   }
 
@@ -608,8 +1279,6 @@ function App() {
   function cerrarReporte() {
     setReportModal(false);
     setPreviewMode(false);
-    if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-    setPreviewPdfUrl(null);
   }
 
   function abrirCorreo() {
@@ -620,34 +1289,27 @@ function App() {
     window.location.href = `mailto:${correoDestino}?subject=${asunto}&body=${cuerpo}`;
   }
 
+  const TABS = [
+    { id: "analisis", label: "Analisis" },
+    { id: "resumen", label: "Resumen" },
+    { id: "quiebre", label: "Quiebre de stock" },
+    { id: "comparar", label: "Comparar sucursales" },
+    { id: "estrategia", label: "Estrategia financiera" },
+    { id: "historial", label: "Historial" },
+  ];
+
   return (
     <div className="max-w-6xl mx-auto p-4 space-y-5 text-stone-800 dark:text-stone-100 min-h-screen">
-      <div className="h-1 w-full rounded-full mb-1" style={{ background: "linear-gradient(90deg, #059669 0%, #2563eb 50%, #7c3aed 100%)" }} />
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-stone-900 dark:text-stone-50">Analisis de pegas</h1>
-          <p className="text-sm text-stone-500 dark:text-stone-400">Productos de baja rotacion por sucursal</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setTab("analisis")}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === "analisis" ? "bg-emerald-600 text-white border-emerald-600" : "border-stone-300 dark:border-stone-700 text-stone-600 dark:text-stone-300"}`}>
-            Analisis
-          </button>
-          <button onClick={() => setTab("estrategia")}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === "estrategia" ? "bg-violet-600 text-white border-violet-600" : "border-stone-300 dark:border-stone-700 text-stone-600 dark:text-stone-300"}`}>
-            Estrategia financiera
-          </button>
-          <button onClick={() => setTab("historial")}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${tab === "historial" ? "bg-blue-600 text-white border-blue-600" : "border-stone-300 dark:border-stone-700 text-stone-600 dark:text-stone-300"}`}>
-            Historial
-          </button>
-          <button onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-            title="Cambiar modo claro/oscuro"
-            className="px-3 py-1.5 rounded-lg text-sm border border-stone-300 dark:border-stone-700 text-stone-600 dark:text-stone-300">
-            {theme === "light" ? "🌙" : "☀️"}
-          </button>
-        </div>
-      </div>
+      <DS.AppHeader
+        theme={THEME}
+        tab={tab}
+        tabs={TABS}
+        onTabChange={setTab}
+        darkMode={theme === "dark"}
+        onToggleDark={() => setTheme(theme === "light" ? "dark" : "light")}
+        onLogout={supabaseListo ? auth.signOut : null}
+        userEmail={auth.session?.user?.email}
+      />
 
       {!supabaseListo && (
         <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
@@ -672,6 +1334,187 @@ function App() {
             </div>
           ))}
         </div>
+      ) : tab === "resumen" ? (
+        <div className="space-y-5">
+          <div>
+            <h2 className="font-medium text-stone-900 dark:text-stone-50 mb-2">Resumen consolidado (todas las sucursales)</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-3 border-l-2 border-red-500">
+                <p className="text-xs text-red-700 dark:text-red-300 mb-1">Capital atrapado en Grupo A</p>
+                <p className="text-lg font-medium text-red-900 dark:text-red-200">{money(totalesGlobales.capitalPegas, moneda)}</p>
+              </div>
+              <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg p-3 border-l-2 border-emerald-500">
+                <p className="text-xs text-emerald-700 dark:text-emerald-300 mb-1">Utilidad total generada (13 meses)</p>
+                <p className="text-lg font-medium text-emerald-900 dark:text-emerald-200">{money(totalesGlobales.utilidadTotal, moneda)}</p>
+              </div>
+              <div className="bg-violet-50 dark:bg-violet-900/20 rounded-lg p-3 border-l-2 border-violet-500">
+                <p className="text-xs text-violet-700 dark:text-violet-300 mb-1">Codigos en Grupo A (prioridad)</p>
+                <p className="text-lg font-medium text-violet-900 dark:text-violet-200">{totalesGlobales.countA}</p>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="font-medium text-stone-900 dark:text-stone-50 mb-2 text-sm">Por sucursal</h3>
+            <div className="overflow-x-auto border border-stone-200 dark:border-stone-800 rounded-lg">
+              <table className="w-full text-sm">
+                <thead className="bg-stone-50 dark:bg-stone-900 text-stone-500 dark:text-stone-400 text-xs uppercase">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium">Sucursal</th>
+                    <th className="text-right px-3 py-2 font-medium">Grupo A</th>
+                    <th className="text-right px-3 py-2 font-medium">Grupo B</th>
+                    <th className="text-right px-3 py-2 font-medium">Grupo C</th>
+                    <th className="text-right px-3 py-2 font-medium">Capital en Grupo A</th>
+                    <th className="text-right px-3 py-2 font-medium">Utilidad generada</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {resumenPorSucursal.map((s) => (
+                    <tr key={s.sucursal} className="border-t border-stone-100 dark:border-stone-800">
+                      <td className="px-3 py-2 font-medium">{s.sucursal}</td>
+                      <td className="px-3 py-2 text-right">{s.countA}</td>
+                      <td className="px-3 py-2 text-right">{s.countB}</td>
+                      <td className="px-3 py-2 text-right">{s.countC}</td>
+                      <td className="px-3 py-2 text-right">{money(s.capitalPegas, moneda)}</td>
+                      <td className="px-3 py-2 text-right">{money(s.utilidadTotal, moneda)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="border border-stone-200 dark:border-stone-800 rounded-lg p-4 space-y-3">
+            <h3 className="font-medium text-stone-900 dark:text-stone-50 text-sm">Simulador de liquidacion (Grupo A, filtro actual: {sucursalFiltro})</h3>
+            <div className="flex items-center gap-3">
+              <label className="text-sm text-stone-600 dark:text-stone-300">Descuento a aplicar:</label>
+              <input type="range" min="0" max="70" step="5" value={descuentoSimulado}
+                onChange={(e) => setDescuentoSimulado(Number(e.target.value))} className="flex-1" />
+              <span className="text-sm font-medium w-12">{descuentoSimulado}%</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3 text-sm">
+              <div>
+                <p className="text-stone-500 dark:text-stone-400 text-xs">Productos Grupo A</p>
+                <p className="font-medium">{simulacion.count}</p>
+              </div>
+              <div>
+                <p className="text-stone-500 dark:text-stone-400 text-xs">Capital contable liberado</p>
+                <p className="font-medium">{money(simulacion.capitalLiberado, moneda)}</p>
+              </div>
+              <div>
+                <p className="text-stone-500 dark:text-stone-400 text-xs">Ingreso estimado con descuento</p>
+                <p className="font-medium">{money(simulacion.ingresoEstimado, moneda)}</p>
+              </div>
+            </div>
+            <p className="text-xs text-stone-400">
+              Capital liberado = valor a costo del stock de Grupo A (lo que hoy esta inmovilizado). Ingreso estimado = si se vende todo ese stock al precio de venta con el descuento indicado. Son dos numeros distintos: uno es lo que se libera en libros, otro es lo que realmente entraria en caja.
+            </p>
+          </div>
+        </div>
+      ) : tab === "quiebre" ? (
+        <div className="space-y-5">
+          <p className="text-sm text-stone-500 dark:text-stone-400">
+            Lo opuesto a una pega: productos que se estan vendiendo bien pero se van a quedar sin stock. Filtro de sucursal actual: {sucursalFiltro}.
+          </p>
+          <div>
+            <h3 className="font-medium text-red-700 dark:text-red-400 text-sm mb-2">Ya agotado, con demanda activa ({quiebreYaAgotado.length})</h3>
+            <div className="overflow-x-auto border border-stone-200 dark:border-stone-800 rounded-lg">
+              <table className="w-full text-sm">
+                <thead className="bg-stone-50 dark:bg-stone-900 text-stone-500 dark:text-stone-400 text-xs uppercase">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium">Codigo</th>
+                    <th className="text-left px-3 py-2 font-medium">Descripcion</th>
+                    <th className="text-left px-3 py-2 font-medium">Sucursal</th>
+                    <th className="text-right px-3 py-2 font-medium">Prom. venta mensual</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quiebreYaAgotado.slice(0, topN).map((r, i) => (
+                    <tr key={`${r.codigo}-${i}`} className="border-t border-stone-100 dark:border-stone-800">
+                      <td className="px-3 py-2 font-medium">{r.codigo}</td>
+                      <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.descripcion}</td>
+                      <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.sucursal}</td>
+                      <td className="px-3 py-2 text-right">{r.ventaPromedio}</td>
+                    </tr>
+                  ))}
+                  {quiebreYaAgotado.length === 0 && (
+                    <tr><td colSpan={4} className="px-3 py-4 text-center text-stone-400">Ninguno en este filtro.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <h3 className="font-medium text-amber-700 dark:text-amber-400 text-sm mb-2">Por agotarse en menos de 2 meses ({quiebrePorAgotarse.length})</h3>
+            <div className="overflow-x-auto border border-stone-200 dark:border-stone-800 rounded-lg">
+              <table className="w-full text-sm">
+                <thead className="bg-stone-50 dark:bg-stone-900 text-stone-500 dark:text-stone-400 text-xs uppercase">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium">Codigo</th>
+                    <th className="text-left px-3 py-2 font-medium">Descripcion</th>
+                    <th className="text-left px-3 py-2 font-medium">Sucursal</th>
+                    <th className="text-right px-3 py-2 font-medium">Stock</th>
+                    <th className="text-right px-3 py-2 font-medium">Prom. venta mensual</th>
+                    <th className="text-right px-3 py-2 font-medium">Meses restantes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quiebrePorAgotarse.slice(0, topN).map((r, i) => (
+                    <tr key={`${r.codigo}-${i}`} className="border-t border-stone-100 dark:border-stone-800">
+                      <td className="px-3 py-2 font-medium">{r.codigo}</td>
+                      <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.descripcion}</td>
+                      <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.sucursal}</td>
+                      <td className="px-3 py-2 text-right">{r.stock}</td>
+                      <td className="px-3 py-2 text-right">{r.ventaPromedio}</td>
+                      <td className="px-3 py-2 text-right">{Math.round(r.mesesInventario * 10) / 10}</td>
+                    </tr>
+                  ))}
+                  {quiebrePorAgotarse.length === 0 && (
+                    <tr><td colSpan={6} className="px-3 py-4 text-center text-stone-400">Ninguno en este filtro.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : tab === "comparar" ? (
+        <div className="space-y-3">
+          <p className="text-sm text-stone-500 dark:text-stone-400">
+            Mismo codigo comparado entre sucursales, ordenado por la mayor diferencia de venta promedio mensual entre la sucursal que mas lo mueve y la que menos (ignora el filtro de sucursal, siempre compara todas).
+          </p>
+          <div className="overflow-x-auto border border-stone-200 dark:border-stone-800 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-stone-50 dark:bg-stone-900 text-stone-500 dark:text-stone-400 text-xs uppercase">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium">Codigo</th>
+                  <th className="text-left px-3 py-2 font-medium">Descripcion</th>
+                  {sucursales.filter((s) => s !== "Todas").map((s) => (
+                    <th key={s} className="text-left px-3 py-2 font-medium">{s}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {compararSucursales.map((g, i) => (
+                  <tr key={`${g.codigo}-${i}`} className="border-t border-stone-100 dark:border-stone-800">
+                    <td className="px-3 py-2 font-medium">{g.codigo}</td>
+                    <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{g.descripcion}</td>
+                    {sucursales.filter((s) => s !== "Todas").map((s) => (
+                      <td key={s} className="px-3 py-2 text-stone-600 dark:text-stone-300">
+                        {g.porSucursal[s] ? `${g.porSucursal[s].ventaPromedio}/mes` : "-"}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                {compararSucursales.length === 0 && (
+                  <tr><td colSpan={sucursales.length + 2} className="px-3 py-4 text-center text-stone-400">Sin datos suficientes.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-stone-400">
+            Un codigo con venta alta en una sucursal y baja o nula en otra es candidato a trasladar stock en vez de liquidar.
+          </p>
+        </div>
       ) : tab === "estrategia" ? (
         <div className="space-y-3">
           <p className="text-sm text-stone-500 dark:text-stone-400">
@@ -690,9 +1533,7 @@ function App() {
                     <p className="font-medium text-stone-900 dark:text-stone-50">{r.codigo} - {r.descripcion}</p>
                     <p className="text-xs text-stone-500 dark:text-stone-400">{r.sucursal} - Stock {r.stock} - Capital {money(r.capitalAtrapado, moneda)}</p>
                   </div>
-                  <span className={`shrink-0 inline-block w-6 h-6 leading-6 text-center rounded-full text-xs font-semibold ${grupoBadgeClasses(grupo)}`}>
-                    {grupo}
-                  </span>
+                  <DS.GroupBadge grupo={grupo} />
                 </div>
                 <p className="text-sm font-medium text-violet-700 dark:text-violet-400">{est.titulo}</p>
                 <p className="text-sm text-stone-600 dark:text-stone-300">{est.texto}</p>
@@ -708,21 +1549,14 @@ function App() {
                 Subir Excel
                 <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
               </label>
-              {!usingSample && (
-                <button onClick={() => { setParsedRaw(sampleData()); setUsingSample(true); setFileName(""); setMoneda("₡"); }}
-                  className="px-3 py-2 border border-stone-300 rounded-lg text-sm hover:bg-stone-50">
-                  Datos de ejemplo
-                </button>
-              )}
               <button onClick={guardarEnHistorial} disabled={guardando}
                 className="px-3 py-2 border border-emerald-300 text-emerald-700 rounded-lg text-sm hover:bg-emerald-50 disabled:opacity-50">
                 {guardando ? "Guardando..." : "Guardar en historial"}
               </button>
             </div>
-            <button onClick={() => setReportModal(true)}
-              className="px-3 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700">
+            <DS.Button theme={THEME} variant="primary" onClick={() => setReportModal(true)}>
               Generar reporte
-            </button>
+            </DS.Button>
           </div>
 
           {usingSample && (
@@ -738,42 +1572,80 @@ function App() {
           )}
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-emerald-50 rounded-lg p-3 border-l-2 border-emerald-500">
-              <p className="text-xs text-emerald-700 mb-1">SKUs en vista actual</p>
-              <p className="text-xl font-medium text-emerald-900">{totals.count}</p>
-            </div>
-            <div className="bg-blue-50 rounded-lg p-3 border-l-2 border-blue-500">
-              <p className="text-xs text-blue-700 mb-1">Capital atrapado (filtro)</p>
-              <p className="text-xl font-medium text-blue-900">{money(totals.capitalTotal, moneda)}</p>
-            </div>
-            <div className="bg-violet-50 rounded-lg p-3 border-l-2 border-violet-500">
-              <p className="text-xs text-violet-700 mb-1">Capital en el top mostrado</p>
-              <p className="text-xl font-medium text-violet-900">{money(totals.capitalTop, moneda)}</p>
-            </div>
-            <div className="bg-stone-50 rounded-lg p-3 border-l-2 border-stone-400">
-              <p className="text-xs text-stone-500 mb-1">Mostrando</p>
-              <p className="text-xl font-medium">Top {Math.min(topN, sorted.length)}</p>
-            </div>
+            <DS.StatCard theme={THEME} tone="secondary" label="SKUs en vista actual" value={totals.count} />
+            <DS.StatCard theme={THEME} tone="primary" label="Capital atrapado (filtro)" value={money(totals.capitalTotal, moneda)} />
+            <DS.StatCard theme={THEME} tone="accent" label="Capital en el top mostrado" value={money(totals.capitalTop, moneda)} />
+            <DS.StatCard theme={THEME} tone="neutral" label="Mostrando" value={buscando ? `${sorted.length} resultado${sorted.length === 1 ? "" : "s"}` : `Top ${Math.min(topN, sorted.length)}`} />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => setView("capital")}
-              className={`px-3 py-1.5 rounded-lg text-sm border ${view === "capital" ? "bg-blue-600 text-white border-blue-600" : "border-stone-300 hover:bg-stone-50"}`}>
+            <DS.Button theme={THEME} variant={view === "capital" ? "primary" : "outline"} onClick={() => setView("capital")}>
               Mayor capital atrapado
-            </button>
-            <button onClick={() => setView("pega")}
-              className={`px-3 py-1.5 rounded-lg text-sm border ${view === "pega" ? "bg-violet-600 text-white border-violet-600" : "border-stone-300 hover:bg-stone-50"}`}>
+            </DS.Button>
+            <DS.Button theme={THEME} variant={view === "pega" ? "accent" : "outline"} onClick={() => setView("pega")}>
               Candidatos reales a pega
-            </button>
+            </DS.Button>
+            <DS.Button theme={THEME} variant={view === "utilidad" ? "secondary" : "outline"} onClick={() => setView("utilidad")}>
+              Mayor utilidad generada
+            </DS.Button>
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              <select value={sucursalFiltro} onChange={(e) => setSucursalFiltro(e.target.value)}
-                className="text-sm border border-stone-300 dark:border-stone-700 dark:bg-stone-800 rounded-lg px-2 py-1.5">
+              <select value={sucursalFiltro} onChange={(e) => setSucursalFiltro(e.target.value)} className={DS.selectClass}>
                 {sucursales.map((s) => <option key={s} value={s}>{s === "Todas" ? "Todas las sucursales" : s}</option>)}
               </select>
-              <select value={topN} onChange={(e) => setTopN(Number(e.target.value))}
-                className="text-sm border border-stone-300 rounded-lg px-2 py-1.5">
+              <select value={topN} onChange={(e) => setTopN(Number(e.target.value))} className={DS.selectClass}>
                 {[10, 20, 30, 50].map((n) => <option key={n} value={n}>Top {n}</option>)}
               </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 sm:gap-8">
+            <div className="relative">
+              <DS.Icons.Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+              <input type="text" value={busquedaCodigo} onChange={(e) => setBusquedaCodigo(e.target.value)}
+                placeholder="Buscar por codigo..."
+                className={`${DS.inputClass} pl-9`} />
+              {busquedaCodigo && (
+                <button onClick={() => setBusquedaCodigo("")} title="Limpiar"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300">
+                  <DS.Icons.X size={14} />
+                </button>
+              )}
+            </div>
+            <div className="relative">
+              <DS.Icons.Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+              <input type="text" value={busquedaDescripcion} onChange={(e) => setBusquedaDescripcion(e.target.value)}
+                placeholder="Buscar por descripcion..."
+                className={`${DS.inputClass} pl-9`} />
+              {busquedaDescripcion && (
+                <button onClick={() => setBusquedaDescripcion("")} title="Limpiar"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300">
+                  <DS.Icons.X size={14} />
+                </button>
+              )}
+            </div>
+            <div className="relative">
+              <DS.Icons.Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+              <input type="text" value={busquedaMargen} onChange={(e) => setBusquedaMargen(e.target.value)}
+                placeholder="Margen (ej: 20, >30, 10-40)..."
+                className={`${DS.inputClass} pl-9`} />
+              {busquedaMargen && (
+                <button onClick={() => setBusquedaMargen("")} title="Limpiar"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300">
+                  <DS.Icons.X size={14} />
+                </button>
+              )}
+            </div>
+            <div className="relative">
+              <DS.Icons.Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+              <input type="text" value={busquedaMesesSinVenta} onChange={(e) => setBusquedaMesesSinVenta(e.target.value)}
+                placeholder="Meses sin venta (ej: 6, >3, 0-2)..."
+                className={`${DS.inputClass} pl-9`} />
+              {busquedaMesesSinVenta && (
+                <button onClick={() => setBusquedaMesesSinVenta("")} title="Limpiar"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300">
+                  <DS.Icons.X size={14} />
+                </button>
+              )}
             </div>
           </div>
 
@@ -789,31 +1661,38 @@ function App() {
                   <th className="text-right px-3 py-2 font-medium">Stock</th>
                   <th className="text-right px-3 py-2 font-medium">Capital atrapado</th>
                   <th className="text-right px-3 py-2 font-medium">Meses sin venta</th>
+                  <th className="text-right px-3 py-2 font-medium">Prom. venta mensual</th>
                   <th className="text-right px-3 py-2 font-medium">Margen</th>
                   {view === "pega" && <th className="text-right px-3 py-2 font-medium">Score</th>}
+                  {view === "utilidad" && <th className="text-right px-3 py-2 font-medium">Utilidad generada</th>}
                 </tr>
               </thead>
               <tbody>
+                {sorted.length === 0 && (
+                  <tr><td colSpan={11} className="px-3 py-6 text-center text-stone-400">Sin resultados.</td></tr>
+                )}
                 {sorted.map((r, i) => (
                   <tr key={`${r.codigo}-${r.sucursal}-${i}`} className="border-t border-stone-100 dark:border-stone-800 hover:bg-stone-50 dark:hover:bg-stone-900">
                     <td className="px-3 py-2 text-stone-400">{i + 1}</td>
                     <td className="px-3 py-2 font-medium">{r.codigo}</td>
-                    <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.descripcion}</td>
+                    <td className="px-3 py-2 text-stone-600 dark:text-stone-300">
+                      {r.descripcion} <span title={{nunca_vendio:"Nunca vendio",declive:"En declive reciente",creciendo:"Creciendo",estable:"Estable"}[r.tendencia]}>
+                        <DS.TrendIcon tendencia={r.tendencia} />
+                      </span>
+                    </td>
                     <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.sucursal}</td>
                     <td className="px-3 py-2 text-center">
-                      <span className={`inline-block w-6 h-6 leading-6 rounded-full text-xs font-semibold ${grupoBadgeClasses(grupoCalculado(r.score))}`}>
-                        {grupoCalculado(r.score)}
-                      </span>
+                      <DS.GroupBadge grupo={grupoCalculado(r.score)} />
                     </td>
                     <td className="px-3 py-2 text-right">{r.stock}</td>
                     <td className="px-3 py-2 text-right font-medium">{money(r.capitalAtrapado, moneda)}</td>
                     <td className="px-3 py-2 text-right">{r.mesesSinVenta ?? "-"}</td>
+                    <td className="px-3 py-2 text-right">{r.ventaPromedio ?? "-"}</td>
                     <td className="px-3 py-2 text-right">{r.margen}%</td>
+                    {view === "utilidad" && <td className="px-3 py-2 text-right font-medium">{money(r.utilidadTotal, moneda)}</td>}
                     {view === "pega" && (
                       <td className="px-3 py-2 text-right">
-                        <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${scoreBadgeClasses(r.score)}`}>
-                          {Math.round(r.score * 100)}
-                        </span>
+                        <DS.ScoreBadge score={r.score} />
                       </td>
                     )}
                   </tr>
@@ -841,139 +1720,164 @@ function App() {
       )}
 
       {reportModal && !previewMode && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-          <div className="bg-white dark:bg-stone-900 rounded-xl p-5 w-full max-w-sm space-y-4">
-            <h2 className="font-medium text-stone-900">Generar reporte</h2>
+        <DS.Modal>
+          <h2 className={DS.TYPE.sectionTitle}>Generar reporte</h2>
 
-            <div>
-              <p className="text-xs text-stone-500 mb-1">Vista a incluir</p>
-              <select value={reportVista} onChange={(e) => setReportVista(e.target.value)}
-                className="w-full text-sm border border-stone-300 rounded-lg px-2 py-1.5">
-                <option value="actual">La vista que estoy viendo ahora ({view === "capital" ? "capital atrapado" : "candidatos a pega"})</option>
-                <option value="capital">Mayor capital atrapado</option>
-                <option value="pega">Candidatos reales a pega</option>
-              </select>
-            </div>
+          <DS.Field label="Vista a incluir">
+            <select value={reportVista} onChange={(e) => setReportVista(e.target.value)} className={DS.selectClass}>
+              <option value="actual">La vista que estoy viendo ahora ({view === "capital" ? "capital atrapado" : "candidatos a pega"})</option>
+              <option value="capital">Mayor capital atrapado</option>
+              <option value="pega">Candidatos reales a pega</option>
+            </select>
+          </DS.Field>
 
-            <div>
-              <p className="text-xs text-stone-500 mb-1">Formato</p>
-              <div className="flex gap-2">
-                <button onClick={() => setReportFormato("pdf")}
-                  className={`flex-1 px-3 py-1.5 rounded-lg text-sm border ${reportFormato === "pdf" ? "bg-blue-600 text-white border-blue-600" : "border-stone-300"}`}>
-                  PDF
-                </button>
-                <button onClick={() => setReportFormato("excel")}
-                  className={`flex-1 px-3 py-1.5 rounded-lg text-sm border ${reportFormato === "excel" ? "bg-blue-600 text-white border-blue-600" : "border-stone-300"}`}>
-                  Excel
-                </button>
-              </div>
+          <DS.Field label="Formato">
+            <div className="flex gap-2">
+              <DS.Button theme={THEME} variant={reportFormato === "pdf" ? "primary" : "outline"} className="flex-1" onClick={() => setReportFormato("pdf")}>
+                PDF
+              </DS.Button>
+              <DS.Button theme={THEME} variant={reportFormato === "excel" ? "primary" : "outline"} className="flex-1" onClick={() => setReportFormato("excel")}>
+                Excel
+              </DS.Button>
             </div>
+          </DS.Field>
 
-            <div>
-              <p className="text-xs text-stone-500 mb-1">Correo de gerencia (opcional, para el boton de enviar)</p>
-              <input type="email" value={correoDestino} onChange={(e) => setCorreoDestino(e.target.value)}
-                placeholder="gerencia@empresa.com"
-                className="w-full text-sm border border-stone-300 rounded-lg px-2 py-1.5" />
-            </div>
+          <DS.Field label="Correo de gerencia (opcional, para el boton de enviar)">
+            <input type="email" value={correoDestino} onChange={(e) => setCorreoDestino(e.target.value)}
+              placeholder="gerencia@empresa.com" className={DS.inputClass} />
+          </DS.Field>
 
-            <div className="flex gap-2 pt-2">
-              <button onClick={verVistaPrevia} className="flex-1 px-3 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700">
-                Ver vista previa
-              </button>
-            </div>
-            <button onClick={cerrarReporte} className="w-full text-xs text-stone-400 hover:text-stone-600 pt-1">
-              Cancelar
-            </button>
+          <div className="flex gap-2 pt-2">
+            <DS.Button theme={THEME} variant="primary" className="flex-1" onClick={verVistaPrevia}>
+              Ver vista previa
+            </DS.Button>
           </div>
-        </div>
+          <button onClick={cerrarReporte} className="w-full text-xs text-stone-400 hover:text-stone-300 pt-1">
+            Cancelar
+          </button>
+        </DS.Modal>
       )}
 
       {reportModal && previewMode && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-          <div className="bg-white dark:bg-stone-900 rounded-xl p-5 w-full max-w-3xl max-h-[85vh] flex flex-col space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="font-medium text-stone-900">
-                Vista previa - {previewVista === "capital" ? "Mayor capital atrapado" : "Candidatos reales a pega"}
-              </h2>
-              <button onClick={() => setPreviewMode(false)} className="text-xs text-stone-400 hover:text-stone-600">
-                Volver a opciones
-              </button>
+        <DS.Modal maxWidth="max-w-3xl" bodyClassName="space-y-3 flex flex-col max-h-[85vh]">
+          <div className="flex items-center justify-between">
+            <h2 className={DS.TYPE.sectionTitle}>
+              Vista previa - {previewVista === "capital" ? "Mayor capital atrapado" : "Candidatos reales a pega"}
+            </h2>
+            <button onClick={() => setPreviewMode(false)} className="text-xs text-stone-400 hover:text-stone-300">
+              Volver a opciones
+            </button>
+          </div>
+
+          {reportFormato === "pdf" && (
+            <p className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+              La vista previa del PDF en el celular se muestra como tabla (el visor de PDF dentro del navegador no es confiable en Android). El archivo descargado sí sera un PDF real con este mismo contenido.
+            </p>
+          )}
+            <div className="overflow-auto border border-stone-200 dark:border-stone-800 rounded-lg flex-1">
+              <table className="w-full text-sm">
+                <thead className="bg-stone-50 dark:bg-stone-900 text-stone-500 dark:text-stone-400 text-xs uppercase tracking-wide sticky top-0">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium">Codigo</th>
+                    <th className="text-left px-3 py-2 font-medium">Descripcion</th>
+                    <th className="text-left px-3 py-2 font-medium">Sucursal</th>
+                    <th className="text-center px-3 py-2 font-medium">Grupo</th>
+                    <th className="text-right px-3 py-2 font-medium">Stock</th>
+                    <th className="text-right px-3 py-2 font-medium">Capital atrapado</th>
+                    <th className="text-right px-3 py-2 font-medium">Meses sin venta</th>
+                    <th className="text-right px-3 py-2 font-medium">Prom. venta mensual</th>
+                    <th className="text-right px-3 py-2 font-medium">Margen</th>
+                    {previewVista === "pega" && <th className="text-right px-3 py-2 font-medium">Score</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewFilas.map((r, i) => (
+                    <tr key={`${r.codigo}-${i}`} className="border-t border-stone-100 dark:border-stone-800">
+                      <td className="px-3 py-2 font-medium">{r.codigo}</td>
+                      <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.descripcion}</td>
+                      <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.sucursal}</td>
+                      <td className="px-3 py-2 text-center">
+                        <DS.GroupBadge grupo={grupoCalculado(r.score)} />
+                      </td>
+                      <td className="px-3 py-2 text-right">{r.stock}</td>
+                      <td className="px-3 py-2 text-right font-medium">{money(r.capitalAtrapado, moneda)}</td>
+                      <td className="px-3 py-2 text-right">{r.mesesSinVenta ?? "-"}</td>
+                      <td className="px-3 py-2 text-right">{r.ventaPromedio ?? "-"}</td>
+                      <td className="px-3 py-2 text-right">{r.margen}%</td>
+                      {previewVista === "pega" && (
+                        <td className="px-3 py-2 text-right">
+                          <DS.ScoreBadge score={r.score} />
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
-            {reportFormato === "pdf" ? (
-              previewPdfUrl ? (
-                <iframe src={previewPdfUrl} title="Vista previa PDF" className="w-full flex-1 border border-stone-200 rounded-lg" style={{ minHeight: "50vh" }} />
-              ) : (
-                <p className="text-sm text-stone-400">Generando vista previa...</p>
-              )
-            ) : (
-              <div className="overflow-auto border border-stone-200 dark:border-stone-800 rounded-lg flex-1">
-                <table className="w-full text-sm">
-                  <thead className="bg-stone-50 dark:bg-stone-900 text-stone-500 dark:text-stone-400 text-xs uppercase tracking-wide sticky top-0">
-                    <tr>
-                      <th className="text-left px-3 py-2 font-medium">Codigo</th>
-                      <th className="text-left px-3 py-2 font-medium">Descripcion</th>
-                      <th className="text-left px-3 py-2 font-medium">Sucursal</th>
-                      <th className="text-center px-3 py-2 font-medium">Grupo</th>
-                      <th className="text-right px-3 py-2 font-medium">Stock</th>
-                      <th className="text-right px-3 py-2 font-medium">Capital atrapado</th>
-                      <th className="text-right px-3 py-2 font-medium">Meses sin venta</th>
-                      <th className="text-right px-3 py-2 font-medium">Margen</th>
-                      {previewVista === "pega" && <th className="text-right px-3 py-2 font-medium">Score</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewFilas.map((r, i) => (
-                      <tr key={`${r.codigo}-${i}`} className="border-t border-stone-100 dark:border-stone-800">
-                        <td className="px-3 py-2 font-medium">{r.codigo}</td>
-                        <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.descripcion}</td>
-                        <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.sucursal}</td>
-                        <td className="px-3 py-2 text-center">
-                          <span className={`inline-block w-6 h-6 leading-6 rounded-full text-xs font-semibold ${grupoBadgeClasses(grupoCalculado(r.score))}`}>
-                            {grupoCalculado(r.score)}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right">{r.stock}</td>
-                        <td className="px-3 py-2 text-right font-medium">{money(r.capitalAtrapado, moneda)}</td>
-                        <td className="px-3 py-2 text-right">{r.mesesSinVenta ?? "-"}</td>
-                        <td className="px-3 py-2 text-right">{r.margen}%</td>
-                        {previewVista === "pega" && (
-                          <td className="px-3 py-2 text-right">
-                            <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${scoreBadgeClasses(r.score)}`}>
-                              {Math.round(r.score * 100)}
-                            </span>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
             <div className="flex gap-2 pt-1">
-              <button onClick={confirmarDescarga} className="flex-1 px-3 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700">
+              <DS.Button theme={THEME} variant="secondary" className="flex-1" onClick={confirmarDescarga}>
                 Descargar {reportFormato === "pdf" ? "PDF" : "Excel"}
-              </button>
-              <button onClick={abrirCorreo} className="flex-1 px-3 py-2 border border-stone-300 rounded-lg text-sm hover:bg-stone-50">
+              </DS.Button>
+              <DS.Button theme={THEME} variant="outline" className="flex-1" onClick={abrirCorreo}>
                 Abrir correo
-              </button>
-              <button onClick={cerrarReporte} className="px-3 py-2 border border-stone-300 rounded-lg text-sm hover:bg-stone-50">
+              </DS.Button>
+              <DS.Button theme={THEME} variant="outline" onClick={cerrarReporte}>
                 Cerrar
-              </button>
+              </DS.Button>
             </div>
             <p className="text-xs text-stone-400">
               Revisa la vista previa antes de descargar. El boton "Abrir correo" prepara el mensaje en tu app de correo;
               el archivo lo adjuntas manualmente despues de descargarlo (los navegadores no permiten adjuntar automaticamente).
             </p>
-          </div>
-        </div>
+        </DS.Modal>
       )}
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+/* ====================== GATE DE AUTENTICACION ======================
+   Decide QUE se muestra (login / cargando / sin acceso / la app) sin que
+   App() tenga que hacer un return condicional entre sus propios hooks —
+   eso rompe las reglas de hooks de React. App() se monta solo cuando ya
+   hay sesion Y esa cuenta esta en la lista blanca de pegas.allowed_users
+   (o cuando Supabase ni siquiera esta configurado todavia).
+
+   Este chequeo de lista blanca es ademas de la RLS en la base de datos,
+   no en vez de ella: la RLS es lo que de verdad protege los datos; esto
+   solo evita que alguien con cuenta valida (pero sin permiso a Pegas)
+   vea la pantalla de la app sin sentido. */
+function AppGate() {
+  const supabaseListo = !!supabaseClient;
+  const auth = DS.useSupabaseAuth(supabaseClient);
+  const [permitido, setPermitido] = useState(null); // null = sin chequear, true/false = resultado
+
+  useEffect(() => {
+    if (!supabaseListo || !auth.session) { setPermitido(null); return; }
+    let cancelado = false;
+    supabaseClient.schema("pegas").from("allowed_users").select("user_id").eq("user_id", auth.session.user.id).maybeSingle()
+      .then(({ data }) => { if (!cancelado) setPermitido(!!data); })
+      .catch(() => { if (!cancelado) setPermitido(false); });
+    return () => { cancelado = true; };
+  }, [supabaseListo, auth.session]);
+
+  if (!supabaseListo) return <App />;
+  if (auth.loading) {
+    return <div className="min-h-screen grid place-items-center text-stone-400 text-sm">Cargando...</div>;
+  }
+  if (!auth.session) {
+    return <DS.LoginScreen theme={THEME} onSubmit={auth.signIn} loading={auth.signingIn} error={auth.error} />;
+  }
+  if (permitido === null) {
+    return <div className="min-h-screen grid place-items-center text-stone-400 text-sm">Verificando acceso...</div>;
+  }
+  if (!permitido) {
+    return <DS.AccessDenied theme={THEME} userEmail={auth.session.user.email} onLogout={auth.signOut} />;
+  }
+  return <App />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<AppGate />);
 </script>
 </body>
 </html>
