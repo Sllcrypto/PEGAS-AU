@@ -556,6 +556,66 @@ function isMonthHeader(h) {
   return MESES_ES.includes(sinPrefijoN);
 }
 
+/* Determina a que mes/anio real corresponde una columna, para poder
+   distinguir meses que ya pasaron de meses futuros. El formato "nuevo"
+   (nEnero..nDiciembre) no trae anio en el nombre: se asume el anio en curso,
+   que es como el sistema real exporta el corte del anio actual. */
+const HOY = new Date();
+const ANIO_ACTUAL = HOY.getFullYear();
+const MES_ACTUAL_IDX = HOY.getMonth(); // 0 = enero
+function monthColumnInfo(h) {
+  const s = String(h || "").trim().toLowerCase();
+  const mViejo = s.match(/^([a-z]{3})-(\d{2})$/);
+  if (mViejo) {
+    const abrevs = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+    const mi = abrevs.indexOf(mViejo[1]);
+    return mi === -1 ? null : { monthIndex: mi, year: 2000 + parseInt(mViejo[2], 10) };
+  }
+  const sinPrefijoN = s.startsWith("n") ? s.slice(1) : s;
+  const mi2 = MESES_ES.indexOf(sinPrefijoN);
+  return mi2 === -1 ? null : { monthIndex: mi2, year: ANIO_ACTUAL };
+}
+/* Meses futuros vienen en 0 porque todavia no han sucedido, no porque el
+   producto dejo de venderse — hay que excluirlos del conteo, o inflan
+   artificialmente "meses sin venta" y diluyen el promedio de venta. */
+function esColumnaFutura(info) {
+  if (!info) return false;
+  if (info.year > ANIO_ACTUAL) return true;
+  if (info.year === ANIO_ACTUAL && info.monthIndex > MES_ACTUAL_IDX) return true;
+  return false;
+}
+
+/* La fecha de ultima compra puede llegar como objeto Date (Excel con formato
+   de fecha), numero de serie de Excel (fecha sin formato), o texto en varios
+   formatos comunes -- se intenta interpretar en ese orden. */
+function parseFechaCompra(val) {
+  if (!val) return null;
+  if (val instanceof Date && !isNaN(val.getTime())) return val;
+  if (typeof val === "number") {
+    const ms = Math.round((val - 25569) * 86400 * 1000);
+    const d = new Date(ms);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof val === "string") {
+    const s = val.trim();
+    const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    if (m) {
+      let [, d, mo, y] = m;
+      if (y.length === 2) y = "20" + y;
+      const dt = new Date(parseInt(y, 10), parseInt(mo, 10) - 1, parseInt(d, 10));
+      return isNaN(dt.getTime()) ? null : dt;
+    }
+    const dt2 = new Date(s);
+    return isNaN(dt2.getTime()) ? null : dt2;
+  }
+  return null;
+}
+
+function diasDesdeFecha(fecha) {
+  if (!fecha) return null;
+  return Math.floor((HOY.getTime() - fecha.getTime()) / 86400000);
+}
+
 function toNumber(value) {
   if (typeof value === "number") return value;
   if (typeof value === "string") {
@@ -578,8 +638,16 @@ function parseSucursalSheet(rows, sucursal, marginLookup) {
   if (!rows.length) return [];
   const headers = rows[0];
   const idx = buildColumnIndex(headers);
-  const monthCols = [];
-  headers.forEach((h, i) => { if (isMonthHeader(h)) monthCols.push(i); });
+  const monthColsRaw = [];
+  headers.forEach((h, i) => { if (isMonthHeader(h)) monthColsRaw.push(i); });
+  // Se descartan columnas de meses futuros (el mes todavia no ha ocurrido,
+  // por eso viene en 0 -- no es que el producto no se vendio) y se ordenan
+  // cronologicamente, sin depender de como esten fisicamente en el Excel.
+  const monthCols = monthColsRaw
+    .map((i) => ({ i, info: monthColumnInfo(headers[i]) }))
+    .filter(({ info }) => info && !esColumnaFutura(info))
+    .sort((a, b) => (a.info.year - b.info.year) || (a.info.monthIndex - b.info.monthIndex))
+    .map(({ i }) => i);
   const totalIdx = headers.findIndex((h) => normalizeHeader(h) === "total");
   const promedioIdx = headers.findIndex((h) => normalizeHeader(h) === "promedio");
 
@@ -1216,7 +1284,19 @@ function exportExcel(rows, view, moneda) {
   XLSX.writeFile(wb, `reporte-pegas-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
+/* jsPDF (la libreria que arma el PDF) usa una fuente que no incluye el
+   simbolo colon (₡, U+20A1) -- por eso en pantalla se ve bien pero en el
+   PDF sale un caracter roto. Se cambia solo dentro del PDF por "CRC", el
+   codigo internacional oficial del colon (si o si es un simbolo valido en
+   reportes financieros formales). Otros simbolos ($, €, £, ¥) si estan
+   soportados por la fuente del PDF y se dejan tal cual. */
+function monedaSeguraParaPdf(symbol) {
+  const mapa = { "₡": "CRC" };
+  return mapa[symbol] || symbol;
+}
+
 function buildPdfDoc(rows, view, titulo, moneda) {
+  const monedaPdf = monedaSeguraParaPdf(moneda);
   const doc = new window.jspdf.jsPDF({ orientation: "landscape" });
   doc.setFontSize(14);
   doc.text(titulo, 14, 15);
@@ -1226,7 +1306,7 @@ function buildPdfDoc(rows, view, titulo, moneda) {
   if (view !== "capital") head[0].push("Score");
   const body = rows.map((r, i) => {
     const row = [i + 1, r.codigo, r.descripcion, r.sucursal, grupoCalculado(r.score), r.stock,
-      money(r.capitalAtrapado, moneda), r.mesesSinVenta ?? "-", r.ventaPromedio ?? "-", `${r.margen}%`];
+      money(r.capitalAtrapado, monedaPdf), r.mesesSinVenta ?? "-", r.ventaPromedio ?? "-", `${r.margen}%`];
     if (view !== "capital") row.push(Math.round(r.score * 100));
     return row;
   });
@@ -1268,6 +1348,7 @@ function App() {
   const [theme, setTheme] = useState("light");
   const [descuentoSimulado, setDescuentoSimulado] = useState(30);
   const [expandido, setExpandido] = useState({});
+  const [ordenCompras, setOrdenCompras] = useState("reciente");
   const auth = DS.useSupabaseAuth(supabaseClient);
 
   useEffect(() => {
@@ -1390,6 +1471,30 @@ function App() {
     coincideNumero(busquedaMargen, r.margen).ok &&
     coincideNumero(busquedaMesesSinVenta, r.mesesSinVenta).ok
   ), [enriched, sucursalFiltro, busquedaCodigo, busquedaDescripcion, busquedaMargen, busquedaMesesSinVenta]);
+
+  /* Cantidad y fecha de la ultima compra ya vienen del Excel real; aqui se
+     interpreta la fecha, se calcula cuanto capital representa esa compra y
+     -- el valor agregado -- para cuantos meses alcanza esa cantidad al ritmo
+     de venta actual del producto. Mas de 6 meses de cobertura es candidato a
+     posible sobre-compra: se compro mas de lo que el producto rota. */
+  const ultimasCompras = useMemo(() => {
+    return filtered
+      .map((r) => {
+        const fechaCompraParsed = parseFechaCompra(r.fechaUltimaCompra);
+        const capitalCompra = (r.cantidadUltimaCompra || 0) * r.costo;
+        const diasDesdeCompra = diasDesdeFecha(fechaCompraParsed);
+        const mesesQueAlcanza = r.ventaPromedio > 0 && r.cantidadUltimaCompra > 0 ? r.cantidadUltimaCompra / r.ventaPromedio : null;
+        return { ...r, fechaCompraParsed, capitalCompra, diasDesdeCompra, mesesQueAlcanza };
+      })
+      .filter((r) => r.cantidadUltimaCompra > 0 || r.fechaCompraParsed)
+      .sort((a, b) => {
+        if (ordenCompras === "capital") return b.capitalCompra - a.capitalCompra;
+        if (ordenCompras === "sobrecompra") return (b.mesesQueAlcanza ?? -1) - (a.mesesQueAlcanza ?? -1);
+        const ta = a.fechaCompraParsed ? a.fechaCompraParsed.getTime() : -Infinity;
+        const tb = b.fechaCompraParsed ? b.fechaCompraParsed.getTime() : -Infinity;
+        return tb - ta;
+      });
+  }, [filtered, ordenCompras]);
 
   const buscando = !!(busquedaCodigo.trim() || busquedaDescripcion.trim() || busquedaMargen.trim() || busquedaMesesSinVenta.trim());
 
@@ -1565,6 +1670,7 @@ function App() {
     { id: "resumen", label: "Resumen" },
     { id: "quiebre", label: "Quiebre de stock" },
     { id: "comparar", label: "Comparar sucursales" },
+    { id: "compras", label: "Ultimas compras" },
     { id: "estrategia", label: "Estrategia financiera" },
     { id: "historial", label: "Historial" },
   ];
@@ -1784,6 +1890,63 @@ function App() {
           </div>
           <p className="text-xs text-stone-400">
             Un codigo con venta alta en una sucursal y baja o nula en otra es candidato a trasladar stock en vez de liquidar.
+          </p>
+        </div>
+      ) : tab === "compras" ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <p className="text-sm text-stone-500 dark:text-stone-400 max-w-2xl">
+              Cantidad y fecha de la ultima compra registrada por producto y sucursal (dato real del Excel, no estimado), con el capital que representa y para cuantos meses alcanza esa cantidad al ritmo de venta actual.
+            </p>
+            <select value={ordenCompras} onChange={(e) => setOrdenCompras(e.target.value)} className={DS.inputClass + " w-auto"}>
+              <option value="reciente">Mas reciente primero</option>
+              <option value="capital">Mayor capital invertido</option>
+              <option value="sobrecompra">Posible sobre-compra primero</option>
+            </select>
+          </div>
+          <div className="overflow-x-auto border border-stone-200 dark:border-stone-800 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-stone-50 dark:bg-stone-900 text-stone-500 dark:text-stone-400 text-xs uppercase">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium">Codigo</th>
+                  <th className="text-left px-3 py-2 font-medium">Descripcion</th>
+                  <th className="text-left px-3 py-2 font-medium">Sucursal</th>
+                  <th className="text-right px-3 py-2 font-medium">Cantidad comprada</th>
+                  <th className="text-left px-3 py-2 font-medium">Fecha de compra</th>
+                  <th className="text-right px-3 py-2 font-medium">Dias desde la compra</th>
+                  <th className="text-right px-3 py-2 font-medium">Capital invertido</th>
+                  <th className="text-right px-3 py-2 font-medium">A ese ritmo, dura</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ultimasCompras.map((r, i) => (
+                  <tr key={`${r.codigo}-${r.sucursal}-${i}`} className="border-t border-stone-100 dark:border-stone-800">
+                    <td className="px-3 py-2 font-medium">{r.codigo}</td>
+                    <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.descripcion}</td>
+                    <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.sucursal}</td>
+                    <td className="px-3 py-2 text-right">{r.cantidadUltimaCompra || "-"}</td>
+                    <td className="px-3 py-2 text-stone-600 dark:text-stone-300">
+                      {r.fechaCompraParsed ? r.fechaCompraParsed.toLocaleDateString("es-CR") : "-"}
+                    </td>
+                    <td className="px-3 py-2 text-right">{r.diasDesdeCompra != null ? r.diasDesdeCompra : "-"}</td>
+                    <td className="px-3 py-2 text-right">{money(r.capitalCompra, moneda)}</td>
+                    <td className="px-3 py-2 text-right">
+                      {r.mesesQueAlcanza != null ? (
+                        <span className={r.mesesQueAlcanza > 6 ? "text-amber-700 dark:text-amber-400 font-medium" : "text-stone-600 dark:text-stone-300"}>
+                          {r.mesesQueAlcanza.toFixed(1)} meses{r.mesesQueAlcanza > 6 ? " ⚠" : ""}
+                        </span>
+                      ) : "-"}
+                    </td>
+                  </tr>
+                ))}
+                {ultimasCompras.length === 0 && (
+                  <tr><td colSpan={8} className="px-3 py-4 text-center text-stone-400">Sin datos de ultima compra para este filtro.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-stone-400">
+            "A ese ritmo, dura" compara la cantidad comprada contra el promedio de venta mensual: mas de 6 meses de cobertura (⚠) es senal de una compra mas grande de lo que el producto rota — util para ajustar la proxima orden antes de que se vuelva otra pega.
           </p>
         </div>
       ) : tab === "estrategia" ? (
