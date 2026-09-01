@@ -683,9 +683,18 @@ function parseSucursalSheet(rows, sucursal, marginLookup) {
     // la fila de resumen "TOTAL" del formato viejo — ambas se descartan.
     if (!codigo || codigo === "*" || codigo.toUpperCase() === "TOTAL") continue;
 
-    const costo = toNumber(idx.costo !== -1 ? row[idx.costo] : 0);
-    const precioSinImp = toNumber(idx.precioSinImp !== -1 ? row[idx.precioSinImp] : 0);
-    const precioConImp = toNumber(idx.precioConImp !== -1 ? row[idx.precioConImp] : 0);
+    // Se preserva si la columna realmente existia con un dato utilizable,
+    // para poder distinguir "0 real" de "no disponible" en la interfaz sin
+    // tocar el valor numerico que ya usan margen/utilidad/capital atrapado.
+    const costoValor = valOrUndefined(row, idx.costo);
+    const costo = toNumber(costoValor ?? 0);
+    const costoDisponible = costoValor !== undefined;
+    const precioSinImpValor = valOrUndefined(row, idx.precioSinImp);
+    const precioSinImp = toNumber(precioSinImpValor ?? 0);
+    const precioSinImpDisponible = precioSinImpValor !== undefined;
+    const precioConImpValor = valOrUndefined(row, idx.precioConImp);
+    const precioConImp = toNumber(precioConImpValor ?? 0);
+    const precioConImpDisponible = precioConImpValor !== undefined;
 
     let margen;
     let margenEstimado = false;
@@ -720,9 +729,12 @@ function parseSucursalSheet(rows, sucursal, marginLookup) {
       codigo,
       descripcion: String(idx.descripcion !== -1 ? row[idx.descripcion] ?? "" : "").trim(),
       costo,
+      costoDisponible,
       stock: toNumber(idx.stock !== -1 ? row[idx.stock] : 0),
       precioSinImp,
+      precioSinImpDisponible,
       precioConImp,
+      precioConImpDisponible,
       margen: Math.round(margen * 10) / 10,
       margenEstimado,
       ventaTotal,
@@ -1462,6 +1474,8 @@ function App() {
     } else if (tab === "compras") {
       setBusquedaCompras(focus.codigo || "");
       if (focus.sucursal) setSucursalFiltro(focus.sucursal);
+    } else if (tab === "precios") {
+      setPrecioDetalle({ codigo: focus.codigo, sucursal: focus.sucursal });
     } else if (tab === "acciones" && focus.codigo) {
       setSituacionAbierta(`${focus.codigo}|${focus.sucursal}`);
     }
@@ -1476,6 +1490,9 @@ function App() {
   const [masFiltros, setMasFiltros] = useState(false);
   const [busquedaCompras, setBusquedaCompras] = useState("");
   const [compraExpandida, setCompraExpandida] = useState(null); // key "codigo|sucursal" | null
+  const [busquedaPreciosCodigo, setBusquedaPreciosCodigo] = useState("");
+  const [busquedaPreciosDescripcion, setBusquedaPreciosDescripcion] = useState("");
+  const [precioDetalle, setPrecioDetalle] = useState(null); // { codigo, sucursal } | null
   const [guardando, setGuardando] = useState(false);
   const [reportModal, setReportModal] = useState(false);
   const [reportOrigen, setReportOrigen] = useState("productos"); // "productos" | "acciones"
@@ -1946,6 +1963,7 @@ function App() {
   const NAV_SECUNDARIA = [
     { id: "sucursales", label: "Sucursales" },
     { id: "compras", label: "Compras" },
+    { id: "precios", label: "Precios" },
   ];
 
   return (
@@ -2315,6 +2333,8 @@ function App() {
                             <div className="flex flex-wrap gap-3">
                               <button onClick={() => irA("productos", { codigo: r.codigo, sucursal: r.sucursal })}
                                 className="text-xs text-blue-600 hover:underline">Ver producto →</button>
+                              <button onClick={() => irA("precios", { codigo: r.codigo, sucursal: r.sucursal })}
+                                className="text-xs text-blue-600 hover:underline">Ver precios →</button>
                               {existeEnOtraSucursal && (
                                 <button onClick={() => irA("sucursales", { codigo: r.codigo, sucursal: r.sucursal })}
                                   className="text-xs text-blue-600 hover:underline">Comparar sucursales →</button>
@@ -2332,6 +2352,59 @@ function App() {
               </tbody>
             </table>
           </div>
+        </div>
+
+      ) : tab === "precios" ? (
+        <div className="space-y-3">
+          <p className="text-sm text-stone-500 dark:text-stone-400">Consulta costos, precios y margenes de los productos.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input type="text" value={busquedaPreciosCodigo} onChange={(e) => setBusquedaPreciosCodigo(e.target.value)}
+              placeholder="Buscar por codigo..." className={DS.inputClass + " w-40"} />
+            <input type="text" value={busquedaPreciosDescripcion} onChange={(e) => setBusquedaPreciosDescripcion(e.target.value)}
+              placeholder="Buscar por descripcion..." className={DS.inputClass + " w-48"} />
+          </div>
+          <div className="overflow-x-auto border border-stone-200 dark:border-stone-800 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-stone-50 dark:bg-stone-900 text-stone-500 dark:text-stone-400 text-xs uppercase">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium">Producto</th>
+                  <th className="text-left px-3 py-2 font-medium">Sucursal</th>
+                  <th className="text-right px-3 py-2 font-medium">Costo</th>
+                  <th className="text-right px-3 py-2 font-medium">Precio sin IVA</th>
+                  <th className="text-right px-3 py-2 font-medium text-stone-400">Precio con IVA</th>
+                  <th className="text-right px-3 py-2 font-medium">Margen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {enriched
+                  .filter((r) => coincideCampo(busquedaPreciosCodigo, r.codigo, 1) && coincideCampo(busquedaPreciosDescripcion, r.descripcion))
+                  .map((r, i) => (
+                    <tr key={`${r.codigo}-${r.sucursal}-${i}`}
+                      onClick={() => setPrecioDetalle({ codigo: r.codigo, sucursal: r.sucursal })}
+                      className="border-t border-stone-100 dark:border-stone-800 hover:bg-stone-50 dark:hover:bg-stone-900 cursor-pointer">
+                      <td className="px-3 py-2 font-medium text-stone-900 dark:text-stone-50">{r.codigo} <span className="font-normal text-stone-600 dark:text-stone-300">{r.descripcion}</span></td>
+                      <td className="px-3 py-2 text-stone-600 dark:text-stone-300">{r.sucursal}</td>
+                      <td className="px-3 py-2 text-right font-medium">
+                        {r.costoDisponible ? money(r.costo, moneda) : <span className="text-stone-400 italic font-normal">No disponible</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {r.precioSinImpDisponible ? money(r.precioSinImp, moneda) : <span className="text-stone-400 italic">No disponible</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right text-stone-400">
+                        {r.precioConImpDisponible ? money(r.precioConImp, moneda) : <span className="italic">No disponible</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium">
+                        {r.margen}%{r.margenEstimado && <span className="ml-1 text-xs font-normal text-amber-600 dark:text-amber-400">Estimado</span>}
+                      </td>
+                    </tr>
+                  ))}
+                {enriched.length === 0 && (
+                  <tr><td colSpan={6} className="px-3 py-4 text-center text-stone-400">Sin datos.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-stone-400">"Estimado" indica que el margen vino de la hoja CODIGOS % de respaldo, porque esa fila no traia costo/precio propio en su hoja de sucursal.</p>
         </div>
 
       ) : (
@@ -2697,8 +2770,54 @@ function App() {
               </div>
             )}
 
+            <div>
+              <button onClick={() => { setProductoDetalle(null); irA("precios", { codigo: r.codigo, sucursal: r.sucursal }); }}
+                className="text-xs text-blue-600 hover:underline">Ver precios →</button>
+            </div>
+
             <div className="flex justify-end pt-2 border-t border-stone-200 dark:border-stone-800">
               <DS.Button theme={THEME} variant="outline" onClick={() => setProductoDetalle(null)}>Cerrar</DS.Button>
+            </div>
+          </DS.Modal>
+        );
+      })()}
+
+      {precioDetalle && (() => {
+        const filas = enriched.filter((x) => x.codigo === precioDetalle.codigo);
+        if (filas.length === 0) return (
+          <DS.Modal>
+            <p className="text-sm text-stone-500">No se encontro ese producto en los datos actuales.</p>
+            <DS.Button theme={THEME} variant="outline" onClick={() => setPrecioDetalle(null)}>Cerrar</DS.Button>
+          </DS.Modal>
+        );
+        const sucursalOrigen = precioDetalle.sucursal && filas.some((x) => x.sucursal === precioDetalle.sucursal)
+          ? precioDetalle.sucursal : filas[0].sucursal;
+        return (
+          <DS.Modal maxWidth="max-w-lg" bodyClassName="space-y-4">
+            <div>
+              <p className="text-xs text-stone-400">{filas[0].codigo}</p>
+              <h2 className={DS.TYPE.sectionTitle}>{filas[0].descripcion}</h2>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">Valores comerciales por sucursal</p>
+              <div className="space-y-2">
+                {filas.map((f, i) => (
+                  <div key={i} className="border border-stone-200 dark:border-stone-800 rounded-lg p-2.5 text-sm">
+                    <p className="font-medium mb-1">{f.sucursal}</p>
+                    <div className="grid grid-cols-2 gap-1 text-stone-600 dark:text-stone-300">
+                      <p>Costo: {f.costoDisponible ? money(f.costo, moneda) : <span className="text-stone-400 italic">No disponible</span>}</p>
+                      <p>Margen: {f.margen}%{f.margenEstimado && <span className="ml-1 text-xs text-amber-600 dark:text-amber-400">Estimado</span>}</p>
+                      <p>Precio sin IVA: {f.precioSinImpDisponible ? money(f.precioSinImp, moneda) : <span className="text-stone-400 italic">No disponible</span>}</p>
+                      <p>Precio con IVA: {f.precioConImpDisponible ? money(f.precioConImp, moneda) : <span className="text-stone-400 italic">No disponible</span>}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-between items-center pt-2 border-t border-stone-200 dark:border-stone-800">
+              <button onClick={() => { setPrecioDetalle(null); irA("productos", { codigo: precioDetalle.codigo, sucursal: sucursalOrigen }); }}
+                className="text-xs text-blue-600 hover:underline">Ver producto →</button>
+              <DS.Button theme={THEME} variant="outline" onClick={() => setPrecioDetalle(null)}>Cerrar</DS.Button>
             </div>
           </DS.Modal>
         );
