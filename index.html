@@ -2888,16 +2888,35 @@ function App() {
 function AppGate() {
   const supabaseListo = !!supabaseClient;
   const auth = DS.useSupabaseAuth(supabaseClient);
-  const [permitido, setPermitido] = useState(null); // null = sin chequear, true/false = resultado
+  const [permitido, setPermitido] = useState(null); // null = sin chequear/verificando, true/false = resultado real, "error" = fallo de conexion
+  const [intentoVerificacion, setIntentoVerificacion] = useState(0);
 
   useEffect(() => {
     if (!supabaseListo || !auth.session) { setPermitido(null); return; }
     let cancelado = false;
-    supabaseClient.schema("pegas").from("allowed_users").select("user_id").eq("user_id", auth.session.user.id).maybeSingle()
-      .then(({ data }) => { if (!cancelado) setPermitido(!!data); })
-      .catch(() => { if (!cancelado) setPermitido(false); });
+    setPermitido(null);
+    /* Un fallo de conexion (red inestable, timeout) NO es lo mismo que
+       "esta cuenta no esta en la lista blanca" -- antes se trataban igual
+       y alguien con acceso real podia quedar bloqueado por un problema de
+       red pasajero. Ahora se reintenta una vez antes de mostrar un error
+       de conexion, y solo se muestra "sin acceso" cuando la consulta si
+       respondio y de verdad no hay fila para esa cuenta. */
+    function consultar(reintentosRestantes) {
+      supabaseClient.schema("pegas").from("allowed_users").select("user_id").eq("user_id", auth.session.user.id).maybeSingle()
+        .then(({ data, error }) => {
+          if (cancelado) return;
+          if (error) throw error;
+          setPermitido(!!data);
+        })
+        .catch(() => {
+          if (cancelado) return;
+          if (reintentosRestantes > 0) setTimeout(() => { if (!cancelado) consultar(reintentosRestantes - 1); }, 1500);
+          else setPermitido("error");
+        });
+    }
+    consultar(1);
     return () => { cancelado = true; };
-  }, [supabaseListo, auth.session]);
+  }, [supabaseListo, auth.session, intentoVerificacion]);
 
   if (!supabaseListo) return <App />;
   if (auth.loading) {
@@ -2908,6 +2927,19 @@ function AppGate() {
   }
   if (permitido === null) {
     return <div className="min-h-screen grid place-items-center text-stone-400 text-sm">Verificando acceso...</div>;
+  }
+  if (permitido === "error") {
+    return (
+      <div className="min-h-screen grid place-items-center text-stone-500 text-sm text-center px-4">
+        <div className="space-y-3 max-w-xs">
+          <p>No se pudo verificar tu acceso. Revisa tu conexion e intenta de nuevo.</p>
+          <button onClick={() => setIntentoVerificacion((n) => n + 1)}
+            className="px-3 py-1.5 border border-stone-300 dark:border-stone-700 rounded-lg text-sm hover:bg-stone-50 dark:hover:bg-stone-900">
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
   }
   if (!permitido) {
     return <DS.AccessDenied theme={THEME} userEmail={auth.session.user.email} onLogout={auth.signOut} />;
