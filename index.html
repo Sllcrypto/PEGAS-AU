@@ -1495,6 +1495,7 @@ function App() {
   const [precioDetalle, setPrecioDetalle] = useState(null); // { codigo, sucursal } | null
   const [guardando, setGuardando] = useState(false);
   const [reportModal, setReportModal] = useState(false);
+  const [generandoDescarga, setGenerandoDescarga] = useState(false);
   const [reportOrigen, setReportOrigen] = useState("productos"); // "productos" | "acciones"
   const [reportVista, setReportVista] = useState("actual");
   const [reportFormato, setReportFormato] = useState("pdf");
@@ -1923,17 +1924,33 @@ function App() {
     setPreviewMode(true);
   }
 
+  /* Armar el PDF/Excel es trabajo sincrono pesado (mas notorio en
+     celulares con menos memoria) -- sin aviso, se siente como que la app
+     se congelo. Se muestra "Generando..." primero y se deja que el
+     navegador la pinte (un pequeno setTimeout) antes de hacer el trabajo
+     pesado, para que no parezca trabada. La logica de armado del PDF/Excel
+     en si no cambia en absoluto. */
   function confirmarDescarga() {
     const titulo = previewVista === "acciones" ? "Reporte - Situaciones en Acciones"
       : previewVista === "capital" ? "Reporte - Mayor capital atrapado"
       : "Reporte - Candidatos reales a pega";
-    if (reportFormato === "pdf") exportPdf(previewFilas, previewVista, titulo, moneda);
-    else exportExcel(previewFilas, previewVista, moneda);
+    setGenerandoDescarga(true);
+    setTimeout(() => {
+      try {
+        if (reportFormato === "pdf") exportPdf(previewFilas, previewVista, titulo, moneda);
+        else exportExcel(previewFilas, previewVista, moneda);
+      } catch (err) {
+        setError("No se pudo generar el archivo: " + err.message);
+      } finally {
+        setGenerandoDescarga(false);
+      }
+    }, 50);
   }
 
   function cerrarReporte() {
     setReportModal(false);
     setPreviewMode(false);
+    setError("");
   }
 
   function abrirCorreo() {
@@ -2251,9 +2268,14 @@ function App() {
               );
             })() : (
               <div>
-                <p className="text-xs text-stone-400 mb-2">O explora las mayores diferencias entre sucursales:</p>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-stone-400">O explora las mayores diferencias entre sucursales:</p>
+                  <select value={topN} onChange={(e) => setTopN(Number(e.target.value))} className={DS.selectClass + " text-xs py-1"}>
+                    {[10, 20, 30, 50].map((n) => <option key={n} value={n}>Top {n}</option>)}
+                  </select>
+                </div>
                 <div className="space-y-1">
-                  {compararSucursales.slice(0, 8).map((g, i) => (
+                  {compararSucursales.slice(0, topN).map((g, i) => (
                     <button key={i} onClick={() => setSucursalesCodigo(g.codigo)}
                       className="w-full text-left text-sm border border-stone-200 dark:border-stone-800 rounded-lg px-3 py-2 hover:bg-stone-50 dark:hover:bg-stone-900 flex items-center justify-between">
                       <span>{g.codigo} - {g.descripcion}</span>
@@ -2416,8 +2438,10 @@ function App() {
             </DS.Button>
           </div>
 
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{error}</div>
+          {usingSample && (
+            <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+              Estas viendo datos de ejemplo. Sube tu Excel real desde "⚙ Datos" arriba.
+            </div>
           )}
 
           <p className="text-sm text-stone-600 dark:text-stone-300">
@@ -2666,8 +2690,8 @@ function App() {
             </div>
 
             <div className="flex gap-2 pt-1">
-              <DS.Button theme={THEME} variant="secondary" className="flex-1" onClick={confirmarDescarga}>
-                Descargar {reportFormato === "pdf" ? "PDF" : "Excel"}
+              <DS.Button theme={THEME} variant="secondary" className="flex-1" onClick={confirmarDescarga} disabled={generandoDescarga}>
+                {generandoDescarga ? "Generando..." : `Descargar ${reportFormato === "pdf" ? "PDF" : "Excel"}`}
               </DS.Button>
               <DS.Button theme={THEME} variant="outline" className="flex-1" onClick={abrirCorreo}>
                 Abrir correo
@@ -2676,6 +2700,9 @@ function App() {
                 Cerrar
               </DS.Button>
             </div>
+            {error && (
+              <p className="text-sm text-red-600">{error}</p>
+            )}
             <p className="text-xs text-stone-400">
               Revisa la vista previa antes de descargar. El boton "Abrir correo" abre {PROVEEDORES_CORREO[correoProveedor].label} con el mensaje ya redactado;
               el archivo lo adjuntas manualmente despues de descargarlo (ningun navegador permite adjuntar automaticamente por seguridad).
