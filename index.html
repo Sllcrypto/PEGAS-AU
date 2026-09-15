@@ -1252,50 +1252,6 @@ function detectCurrencySymbol(rowsFormatted, idx) {
   return null;
 }
 
-function sampleData() {
-  const sucursales = ["CENTRAL", "ESQUINA", "HATILLO"];
-  const nombres = [
-    "Perfume Aurea 100ml", "Perfume Nocturne 50ml", "Tenis runner blanco", "Tenis urban negro",
-    "Perfume Velvet Rose", "Sandalia clasica", "Perfume Oud Intense", "Tenis skate gris",
-    "Perfume Citrus Fresh", "Bota casual cafe", "Perfume Amber Wood", "Tenis training azul",
-  ];
-  const rows = [];
-  let n = 0;
-  for (const suc of sucursales) {
-    for (let i = 0; i < 12; i++) {
-      n++;
-      const nombre = nombres[(n * 3) % nombres.length];
-      const costo = 8000 + ((n * 137) % 40000);
-      const stock = 1 + ((n * 5) % 30);
-      const margenPct = 8 + ((n * 13) % 45);
-      const precioSinImp = costo * (1 + margenPct / 100);
-      const precioConImp = precioSinImp * 1.13;
-      const mesesMonitoreados = 13;
-      // simula estacionalidad: algunos productos sin venta reciente, otros con venta activa
-      const patron = n % 4;
-      const ventasMensuales = Array.from({ length: mesesMonitoreados }, (_, m) => {
-        if (patron === 0) return 0; // sin ninguna venta
-        if (patron === 1 && m < mesesMonitoreados - 8) return 0; // sin venta hace 8 meses
-        return (n + m) % 5;
-      });
-      const ventaTotal = ventasMensuales.reduce((a, b) => a + b, 0);
-      const ventaPromedio = ventaTotal / mesesMonitoreados;
-      let mesesSinVenta = 0;
-      for (let m = ventasMensuales.length - 1; m >= 0; m--) {
-        if (ventasMensuales[m] > 0) break;
-        mesesSinVenta++;
-      }
-      rows.push({
-        sucursal: suc, codigo: `SKU-${1000 + n}`, descripcion: nombre, costo, stock,
-        precioSinImp, precioConImp, margen: Math.round(margenPct * 10) / 10, margenEstimado: false,
-        ventaTotal, ventaPromedio: Math.round(ventaPromedio * 100) / 100, mesesSinVenta, mesesMonitoreados,
-        ventasMensuales,
-      });
-    }
-  }
-  return rows;
-}
-
 /* ====================== EXPORTACION ====================== */
 
 function exportExcel(rows, view, moneda) {
@@ -1439,7 +1395,7 @@ function SituacionCard({ s, moneda, abierta, onToggle, onVerProducto, onVerSucur
 /* ====================== COMPONENTE PRINCIPAL ====================== */
 
 function App() {
-  const [parsedRaw, setParsedRaw] = useState(() => sampleData());
+  const [parsedRaw, setParsedRaw] = useState([]);
   const [usingSample, setUsingSample] = useState(true);
   const [fileName, setFileName] = useState("");
   const [view, setView] = useState("capital");
@@ -2021,12 +1977,12 @@ function App() {
       {tab === "inicio" ? (
         <div className="space-y-5">
           <p className="text-sm text-stone-500 dark:text-stone-400">
-            {usingSample ? "Datos de ejemplo" : fileName} · {sucursales.length - 1} sucursal{sucursales.length - 1 === 1 ? "" : "es"} · {enriched.length} productos
+            {usingSample ? "Sin datos cargados" : fileName} · {sucursales.length - 1} sucursal{sucursales.length - 1 === 1 ? "" : "es"} · {enriched.length} productos
           </p>
 
           {usingSample && (
             <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
-              Estas viendo datos de ejemplo. Sube tu Excel real desde "⚙ Datos" arriba.
+              Todavia no has cargado un Excel. Sube el tuyo desde "⚙ Datos" arriba para empezar.
             </div>
           )}
 
@@ -2440,7 +2396,7 @@ function App() {
 
           {usingSample && (
             <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
-              Estas viendo datos de ejemplo. Sube tu Excel real desde "⚙ Datos" arriba.
+              Todavia no has cargado un Excel. Sube el tuyo desde "⚙ Datos" arriba.
             </div>
           )}
 
@@ -2710,23 +2666,6 @@ function App() {
         </DS.Modal>
       )}
 
-      {confirmPendiente && (
-        <DS.Modal>
-          <h2 className={DS.TYPE.sectionTitle}>Reemplazar datos actuales</h2>
-          <p className="text-sm text-stone-600 dark:text-stone-300">
-            Esto reemplazara los datos activos ahora mismo ({fileName || "datos de ejemplo"}, {parsedRaw.length} filas). Si no los has guardado en historial, se perderan.
-          </p>
-          <div className="flex gap-2 justify-end">
-            <DS.Button theme={THEME} variant="outline" onClick={() => setConfirmPendiente(null)}>Cancelar</DS.Button>
-            <DS.Button theme={THEME} variant="primary" onClick={() => {
-              if (confirmPendiente.tipo === "archivo") procesarArchivoReal(confirmPendiente.file);
-              else restaurarDesdeHistorialReal(confirmPendiente.id);
-              setConfirmPendiente(null);
-            }}>Continuar</DS.Button>
-          </div>
-        </DS.Modal>
-      )}
-
       {productoDetalle && (() => {
         const r = enriched.find((x) => x.codigo === productoDetalle.codigo && x.sucursal === productoDetalle.sucursal);
         if (!r) return (
@@ -2860,7 +2799,7 @@ function App() {
 
           <div>
             <p className="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">Datos actuales</p>
-            <p className="text-sm text-stone-600 dark:text-stone-300">{usingSample ? "Datos de ejemplo" : fileName}</p>
+            <p className="text-sm text-stone-600 dark:text-stone-300">{usingSample ? "Sin datos cargados" : fileName}</p>
             <p className="text-xs text-stone-400">{parsedRaw.length} filas</p>
           </div>
 
@@ -2894,6 +2833,23 @@ function App() {
                 </div>
               ))}
             </div>
+          </div>
+        </DS.Modal>
+      )}
+
+      {confirmPendiente && (
+        <DS.Modal>
+          <h2 className={DS.TYPE.sectionTitle}>Reemplazar datos actuales</h2>
+          <p className="text-sm text-stone-600 dark:text-stone-300">
+            Esto reemplazara los datos activos ahora mismo ({fileName || "datos de ejemplo"}, {parsedRaw.length} filas). Si no los has guardado en historial, se perderan.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <DS.Button theme={THEME} variant="outline" onClick={() => setConfirmPendiente(null)}>Cancelar</DS.Button>
+            <DS.Button theme={THEME} variant="primary" onClick={() => {
+              if (confirmPendiente.tipo === "archivo") procesarArchivoReal(confirmPendiente.file);
+              else restaurarDesdeHistorialReal(confirmPendiente.id);
+              setConfirmPendiente(null);
+            }}>Continuar</DS.Button>
           </div>
         </DS.Modal>
       )}
