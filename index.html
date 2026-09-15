@@ -1452,6 +1452,7 @@ function App() {
   const [guardando, setGuardando] = useState(false);
   const [reportModal, setReportModal] = useState(false);
   const [generandoDescarga, setGenerandoDescarga] = useState(false);
+  const [leyendoArchivo, setLeyendoArchivo] = useState(false);
   const [reportOrigen, setReportOrigen] = useState("productos"); // "productos" | "acciones"
   const [reportVista, setReportVista] = useState("actual");
   const [reportFormato, setReportFormato] = useState("pdf");
@@ -1495,6 +1496,7 @@ function App() {
      procesamiento en si no cambia en absoluto. */
   const procesarArchivoReal = useCallback((file) => {
     setError("");
+    setLeyendoArchivo(true);
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
@@ -1547,7 +1549,17 @@ function App() {
         irA("inicio");
       } catch (err) {
         setError("No se pudo leer el archivo: " + err.message);
+      } finally {
+        setLeyendoArchivo(false);
       }
+    };
+    /* Antes, si la lectura del archivo fallaba (memoria, permisos del
+       navegador, etc. -- mas comun en celulares que en una computadora),
+       no pasaba absolutamente nada: sin error, sin exito, la pantalla se
+       quedaba igual. Ahora se avisa explicitamente. */
+    reader.onerror = () => {
+      setError("No se pudo leer el archivo en este dispositivo. Prueba con otro navegador, o desde una computadora si el problema persiste.");
+      setLeyendoArchivo(false);
     };
     reader.readAsArrayBuffer(file);
   }, [irA]);
@@ -2804,9 +2816,9 @@ function App() {
           </div>
 
           <div>
-            <label className="inline-flex items-center gap-2 px-3 py-2 border border-stone-300 dark:border-stone-700 rounded-lg text-sm cursor-pointer hover:bg-stone-50 dark:hover:bg-stone-900">
-              Nueva carga
-              <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
+            <label className={`inline-flex items-center gap-2 px-3 py-2 border border-stone-300 dark:border-stone-700 rounded-lg text-sm ${leyendoArchivo ? "opacity-50" : "cursor-pointer hover:bg-stone-50 dark:hover:bg-stone-900"}`}>
+              {leyendoArchivo ? "Leyendo archivo..." : "Nueva carga"}
+              <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} disabled={leyendoArchivo} />
             </label>
             <button onClick={guardarEnHistorial} disabled={guardando}
               className="ml-2 px-3 py-2 border border-emerald-300 text-emerald-700 rounded-lg text-sm hover:bg-emerald-50 disabled:opacity-50">
