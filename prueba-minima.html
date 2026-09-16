@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prueba minima</title>
+</head>
+<body style="font-family: sans-serif; padding: 20px;">
+  <h1>Prueba minima de seleccion de archivo</h1>
+  <p id="estado">Todavia no se ha elegido ningun archivo.</p>
+  <input type="file" id="miInput" accept=".xlsx,.xls,.csv">
+  <div id="log" style="margin-top:20px; padding:10px; background:#eee; white-space:pre-wrap; font-family: monospace; font-size: 13px;"></div>
+  <script>
+    const logDiv = document.getElementById('log');
+    function log(msg) {
+      const linea = new Date().toLocaleTimeString('es-CR') + ' — ' + msg;
+      logDiv.textContent += linea + '\n';
+    }
+    log('Pagina cargada.');
+    if (sessionStorage.getItem('marca_salida')) {
+      const seg = Math.round((Date.now() - Number(sessionStorage.getItem('marca_salida'))) / 1000);
+      log('ALERTA: la pagina se recargo hace ' + seg + 's.');
+      sessionStorage.removeItem('marca_salida');
+    }
+    window.addEventListener('pagehide', function() {
+      sessionStorage.setItem('marca_salida', String(Date.now()));
+    });
+    document.getElementById('miInput').addEventListener('change', function(e) {
+      const f = e.target.files[0];
+      if (f) {
+        document.getElementById('estado').textContent = 'Archivo elegido: ' + f.name + ' (' + f.size + ' bytes)';
+        log('Archivo detectado: ' + f.name);
+      } else {
+        log('Evento change disparado pero sin archivo.');
+      }
+    });
+  </script>
+</body>
+</html>
