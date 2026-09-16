@@ -1755,6 +1755,7 @@ function App() {
      confiable. Con la referencia directa al input, el click programatico
      es mas robusto. */
   const fileInputRef = useRef(null);
+  const lastFileHandledRef = useRef(null);
   const [reportOrigen, setReportOrigen] = useState("productos"); // "productos" | "acciones"
   const [reportVista, setReportVista] = useState("actual");
   const [reportFormato, setReportFormato] = useState("pdf");
@@ -1884,6 +1885,14 @@ function App() {
       log("No hay archivo en e.target.files -- saliendo sin hacer nada");
       return;
     }
+    // Si el listener nativo de respaldo y el onChange de React disparan
+    // ambos para la misma seleccion (lo normal cuando SI funciona bien),
+    // esto evita procesar el mismo archivo dos veces.
+    if (lastFileHandledRef.current === file) {
+      log("Mismo archivo ya en proceso por el otro camino, se ignora el duplicado");
+      return;
+    }
+    lastFileHandledRef.current = file;
     if (!usingSample) {
       setConfirmPendiente({
         tipo: "archivo",
@@ -1894,6 +1903,23 @@ function App() {
     }
     e.target.value = "";
   }, [usingSample, procesarArchivoReal, log]);
+  /* Respaldo: en algunos telefonos/navegadores, el evento sintetico de
+     React (onChange) no dispara de forma confiable en un <input
+     type="file">. Se agrega un listener nativo directo sobre el elemento
+     real del DOM, independiente del sistema de eventos de React, como
+     segunda via para detectar la seleccion del archivo. No cambia el
+     procesamiento en si, solo la forma de detectar que se eligio un
+     archivo. */
+  useEffect(() => {
+    const el = fileInputRef.current;
+    if (!el) return;
+    const onNativeChange = (ev) => {
+      log(`Listener nativo disparado (change). Archivos: ${ev.target.files?.length ?? "undefined"}`);
+      handleFile(ev);
+    };
+    el.addEventListener("change", onNativeChange);
+    return () => el.removeEventListener("change", onNativeChange);
+  }, [handleFile, log]);
   const guardarEnHistorial = useCallback(async () => {
     if (!supabaseClient) {
       setError("Supabase no esta configurado todavia en este archivo.");
