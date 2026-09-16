@@ -1749,6 +1749,41 @@ function App() {
       window.removeEventListener("unhandledrejection", onRej);
     };
   }, [log]);
+  /* Prueba especifica: si el telefono esta matando la pestana por falta de
+     memoria justo cuando se abre el selector de archivos, la pagina entera
+     se recarga sin que se note -- y por eso ningun listener de arriba
+     detecta nada (el codigo literalmente volvio a empezar de cero). Esto
+     deja una marca en sessionStorage justo antes de que la pagina se
+     oculte/cierre, y la revisa al volver a montar, para confirmar si eso
+     esta pasando de verdad. */
+  useEffect(() => {
+    try {
+      const marca = sessionStorage.getItem("pegas_debug_unload");
+      if (marca) {
+        const segundos = Math.round((Date.now() - Number(marca)) / 1000);
+        log(`ALERTA: la pagina se recargo/reinicio hace ${segundos}s, justo antes de este montaje.`);
+        sessionStorage.removeItem("pegas_debug_unload");
+      } else {
+        log("Pagina montada de cero, sin marca de recarga previa en esta sesion.");
+      }
+    } catch (err) {}
+    const marcarSalida = () => {
+      try {
+        sessionStorage.setItem("pegas_debug_unload", String(Date.now()));
+      } catch (err) {}
+    };
+    window.addEventListener("pagehide", marcarSalida);
+    window.addEventListener("beforeunload", marcarSalida);
+    const onVis = () => {
+      if (document.visibilityState === "hidden") marcarSalida();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("pagehide", marcarSalida);
+      window.removeEventListener("beforeunload", marcarSalida);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [log]);
   /* Se usa un boton real + click programatico en vez de un <label> envolviendo
      un <input type="file"> oculto -- en algunos navegadores/telefonos Android
      ese patron no dispara el evento de seleccion de archivo de forma
