@@ -615,7 +615,8 @@
   useState,
   useMemo,
   useCallback,
-  useEffect
+  useEffect,
+  useRef
 } = React;
 
 /* ====================== CONFIGURACION SUPABASE ======================
@@ -1729,6 +1730,12 @@ function App() {
   const [reportModal, setReportModal] = useState(false);
   const [generandoDescarga, setGenerandoDescarga] = useState(false);
   const [leyendoArchivo, setLeyendoArchivo] = useState(false);
+  /* Se usa un boton real + click programatico en vez de un <label> envolviendo
+     un <input type="file"> oculto -- en algunos navegadores/telefonos Android
+     ese patron no dispara el evento de seleccion de archivo de forma
+     confiable. Con la referencia directa al input, el click programatico
+     es mas robusto. */
+  const fileInputRef = useRef(null);
   const [reportOrigen, setReportOrigen] = useState("productos"); // "productos" | "acciones"
   const [reportVista, setReportVista] = useState("actual");
   const [reportFormato, setReportFormato] = useState("pdf");
@@ -3386,15 +3393,19 @@ function App() {
     className: "text-sm text-stone-600 dark:text-stone-300"
   }, usingSample ? "Sin datos cargados" : fileName), /*#__PURE__*/React.createElement("p", {
     className: "text-xs text-stone-400"
-  }, parsedRaw.length, " filas")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  }, parsedRaw.length, " filas")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    disabled: leyendoArchivo,
+    onClick: () => fileInputRef.current && fileInputRef.current.click(),
     className: `inline-flex items-center gap-2 px-3 py-2 border border-stone-300 dark:border-stone-700 rounded-lg text-sm ${leyendoArchivo ? "opacity-50" : "cursor-pointer hover:bg-stone-50 dark:hover:bg-stone-900"}`
-  }, leyendoArchivo ? "Leyendo archivo..." : "Nueva carga", /*#__PURE__*/React.createElement("input", {
+  }, leyendoArchivo ? "Leyendo archivo..." : "Nueva carga"), /*#__PURE__*/React.createElement("input", {
+    ref: fileInputRef,
     type: "file",
     accept: ".xlsx,.xls,.csv",
     className: "hidden",
     onChange: handleFile,
     disabled: leyendoArchivo
-  })), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("button", {
     onClick: guardarEnHistorial,
     disabled: guardando,
     className: "ml-2 px-3 py-2 border border-emerald-300 text-emerald-700 rounded-lg text-sm hover:bg-emerald-50 disabled:opacity-50"
